@@ -115,9 +115,23 @@ if not hist90.empty and "Date" in hist90.columns:
             w = group["Poids"].replace(0, np.nan)
             if w.isna().all(): return pd.Series({"Perf%": np.nan})
             return pd.Series({"Perf%": (group["Perf%"]*w/w.sum()).sum()})
-        pea = P[P["Type"]=="PEA"].groupby("Date").apply(weighted).reset_index().assign(Courbe="PEA")
-        cto = P[P["Type"]=="CTO"].groupby("Date").apply(weighted).reset_index().assign(Courbe="CTO")
-        tot = P.groupby("Date").apply(weighted).reset_index().assign(Courbe="Total")
+        pea = (P[P["Type"]=="PEA"]
+               .groupby("Date", as_index=False)
+               .apply(weighted)
+               .assign(Courbe="PEA")
+               .reset_index(drop=True))
+
+        cto = (P[P["Type"]=="CTO"]
+               .groupby("Date", as_index=False)
+               .apply(weighted)
+               .assign(Courbe="CTO")
+               .reset_index(drop=True))
+
+        tot = (P.groupby("Date", as_index=False)
+               .apply(weighted)
+               .assign(Courbe="Total")
+               .reset_index(drop=True))
+
         G = pd.concat([pea, cto, tot], ignore_index=True)
         ch = alt.Chart(G).mark_line().encode(
             x=alt.X("Date:T", title=""),
