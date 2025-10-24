@@ -1,16 +1,4 @@
 [
-  {
-    "Ticker": "AIR.PA",
-    "Type": "PEA",
-    "Qty": 10,
-    "PRU": 154.2,
-    "Name": "Airbus SE"
-  },
-  {
-    "Ticker": "NVDA",
-    "Type": "CTO",
-    "Qty": 5,
-    "PRU": 395.0,
-    "Name": "NVIDIA Corp."
-  }
+  { "Ticker": "AIR.PA", "Type": "PEA", "Qty": 10, "PRU": 154.2, "Name": "Airbus SE" },
+  { "Ticker": "NVDA",  "Type": "CTO", "Qty": 5,  "PRU": 395.0, "Name": "NVIDIA Corp." }
 ]
