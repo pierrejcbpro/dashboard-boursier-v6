@@ -7,9 +7,12 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 
 DATA_DIR = "data"
 MAPPING_PATH = os.path.join(DATA_DIR, "id_mapping.json")
+WL_PATH = os.path.join(DATA_DIR, "watchlist_ls.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 if not os.path.exists(MAPPING_PATH):
     with open(MAPPING_PATH,"w",encoding="utf-8") as f: json.dump({}, f)
+if not os.path.exists(WL_PATH):
+    with open(WL_PATH,"w",encoding="utf-8") as f: json.dump([], f)
 
 UA = {"User-Agent":"Mozilla/5.0"}
 
@@ -37,6 +40,15 @@ def load_mapping():
     except Exception: return {}
 def save_mapping(m): 
     with open(MAPPING_PATH,"w",encoding="utf-8") as f: json.dump(m,f,ensure_ascii=False,indent=2)
+
+def load_watchlist_ls():
+    try:
+        with open(WL_PATH,"r",encoding="utf-8") as f: return json.load(f)
+    except Exception: return []
+
+def save_watchlist_ls(lst):
+    with open(WL_PATH,"w",encoding="utf-8") as f: json.dump(lst,f,ensure_ascii=False,indent=2)
+
 def _norm(s): return (s or "").strip().upper()
 
 _PARIS = {"AIR","ORA","MC","TTE","BNP","SGO","ENGI","SU","DG","ACA","GLE","RI","KER","HO","EN","CAP","AI","PUB","VIE","VIV","STM"}
@@ -71,6 +83,49 @@ def resolve_identifier(id_or_ticker):
         except Exception: pass
     return None,{}
 
+# SMART SEARCH BY NAME
+@lru_cache(maxsize=256)
+def yahoo_search(query:str, region="FR", lang="fr-FR", quotesCount=15):
+    url = "https://query2.finance.yahoo.com/v1/finance/search"
+    params = {"q": query, "quotesCount": quotesCount, "newsCount": 0, "lang": lang, "region": region}
+    try:
+        r = requests.get(url, params=params, headers=UA, timeout=12)
+        r.raise_for_status()
+        data = r.json()
+        quotes = data.get("quotes", [])
+        out=[]
+        for q in quotes:
+            out.append({
+                "symbol": q.get("symbol"),
+                "shortname": q.get("shortname") or q.get("longname") or "",
+                "longname": q.get("longname") or q.get("shortname") or "",
+                "exchDisp": q.get("exchDisp") or "",
+                "typeDisp": q.get("typeDisp") or "",
+            })
+        return out
+    except Exception:
+        return []
+
+def find_ticker_by_name(company_name:str, prefer_markets=("Paris","XETRA","Frankfurt","NasdaqGS","NYSE")):
+    if not company_name: return []
+    q = company_name.strip()
+    res = yahoo_search(q)
+    if not res: return []
+    eq = [r for r in res if (r.get("typeDisp","").lower() in ("equity","action","stock","actions") or r.get("symbol",""))]
+    ranked=[]
+    for r in eq:
+        score = 0
+        exch = (r.get("exchDisp") or "").lower()
+        name = (r.get("shortname") or r.get("longname") or "").lower()
+        sym = (r.get("symbol") or "").upper()
+        if any(pm.lower() in exch for pm in prefer_markets): score += 3
+        if q.lower() in name: score += 2
+        if q.lower() in sym.lower(): score += 1
+        ranked.append((score, r))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return [r for _,r in ranked]
+
+# Constituents (Wikipedia) — CAC40 only here for speed
 @lru_cache(maxsize=32)
 def _read_tables(url:str):
     html=requests.get(url,headers=UA,timeout=20).text
@@ -94,27 +149,12 @@ def _extract_name_ticker(tables):
 def members_cac40():
     df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/CAC_40"))
     df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.PA"); df["index"]="CAC 40"; return df
-@lru_cache(maxsize=8)
-def members_dax40():
-    df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/DAX"))
-    df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.DE"); df["index"]="DAX 40"; return df
-@lru_cache(maxsize=8)
-def members_nasdaq100():
-    df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/NASDAQ-100")); df["index"]="NASDAQ 100"; return df
-@lru_cache(maxsize=8)
-def members_sp500():
-    df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")); df["index"]="S&P 500"; return df
-@lru_cache(maxsize=8)
-def members_dowjones():
-    df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average")); df["index"]="Dow Jones"; return df
+
 def members(index_name:str):
     if index_name=="CAC 40": return members_cac40()
-    if index_name=="DAX 40": return members_dax40()
-    if index_name=="NASDAQ 100": return members_nasdaq100()
-    if index_name=="S&P 500": return members_sp500()
-    if index_name=="Dow Jones": return members_dowjones()
     return pd.DataFrame(columns=["ticker","name","index"])
 
+# Pricing & indicators
 @lru_cache(maxsize=64)
 def fetch_prices_cached(tickers_tuple, period="120d"):
     tickers=list(tickers_tuple)
@@ -155,6 +195,7 @@ def compute_metrics(df:pd.DataFrame)->pd.DataFrame:
     last["trend_score"]=0.6*last["gap20"]+0.4*last["gap50"]
     return last.reset_index(drop=True)
 
+# News & IA
 @lru_cache(maxsize=256)
 def google_news_titles(query, lang="fr"):
     url=f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl={lang}-{lang.upper()}&gl={lang.upper()}&ceid={lang.upper()}:{lang.upper()}"
@@ -163,11 +204,24 @@ def google_news_titles(query, lang="fr"):
         import xml.etree.ElementTree as ET
         root=ET.fromstring(xml)
         items=[(it.findtext("title") or "", it.findtext("link") or "") for it in root.iter("item")]
-        return items[:6]
+        return items[:10]
     except Exception: return []
+
+def filter_company_news(ticker, company_name, items):
+    if not items: return []
+    tkr=(ticker or "").lower()
+    name=(company_name or "").lower()
+    name_short = name.split(" ")[0] if name else ""
+    keep=[]
+    for title,link in items:
+        tl=title.lower()
+        if (tkr and tkr in tl) or (name and name in tl) or (name_short and name_short in tl):
+            keep.append((title,link))
+    return keep
 
 def news_summary(name,ticker,lang="fr"):
     items=google_news_titles(f"{name} {ticker}",lang) or google_news_titles(name,lang)
+    items=filter_company_news(ticker, name, items)
     titles=[t for t,_ in items]
     if not titles: return ("Pas d’actualité saillante — mouvement technique / macro.",0.0,[])
     POS=["résultats","bénéfice","contrat","relève","guidance","record","upgrade","partenariat","dividende","approbation"]
@@ -219,18 +273,42 @@ def price_levels_from_row(row, profile="Neutre"):
 def style_variations(df, cols):
     def color_var(v):
         if pd.isna(v): return ""
-        if v>0: return "background-color:#14302A; color:#2bd680"
-        if v<0: return "background-color:#3A2326; color:#ff7b85"
-        return "background-color:#2a313d; color:#cbd5e1"
+        if v>0: return "background-color:#e8f5e9; color:#0b8f3a"
+        if v<0: return "background-color:#ffebee; color:#d5353a"
+        return "background-color:#e8f0fe; color:#1e88e5"
     sty=df.style
     for c in cols:
         if c in df.columns: sty=sty.applymap(color_var, subset=[c])
     return sty
 
+@lru_cache(maxsize=1024)
+def company_name_from_ticker(ticker: str) -> str:
+    if not ticker: return ""
+    try:
+        t = yf.Ticker(ticker)
+        name = None
+        try:
+            name = t.fast_info.get("shortName", None)
+        except Exception:
+            pass
+        if not name:
+            info = t.get_info()
+            name = info.get("shortName") or info.get("longName")
+        return name or ticker
+    except Exception:
+        return ticker
+
 def fetch_all_markets(markets, days_hist=90):
     frames=[]
-    for idx,_ in markets:
-        mem=members(idx)
+    for idx, source in markets:
+        if idx=="CAC 40":
+            mem=members("CAC 40")
+        elif idx=="LS Exchange":
+            ls_list = load_watchlist_ls()
+            tickers=[maybe_guess_yahoo(x) or x for x in ls_list] if ls_list else []
+            mem=pd.DataFrame({"ticker": tickers, "name": ls_list})
+        else:
+            continue
         if mem.empty: continue
         px=fetch_prices(mem["ticker"].tolist(), days=days_hist)
         if px.empty: continue
