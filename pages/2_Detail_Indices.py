@@ -1,4 +1,4 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
-st.write('Mon Portefeuille v6.3 (placeholder)')
+st.write('Détail Indices v6.3 (placeholder)')
 
