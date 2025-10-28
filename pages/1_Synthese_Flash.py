@@ -223,3 +223,16 @@ st.info(
     f"Variation moyenne **{avg_var:+.2f}%** — {nb_up} hausses / {nb_down} baisses — "
     f"dispersion **{spread:.2f} pts** : {sector_tone}."
 )
+
+st.divider()
+st.subheader("🚀 Sélection IA — Opportunités idéales du moment")
+
+from lib import select_top_actions
+
+# Reprendre les métriques du marché global déjà calculées
+top_actions = select_top_actions(df_global, profile=profil, n=5)
+
+if top_actions.empty:
+    st.info("Aucune opportunité claire détectée aujourd’hui selon l’IA.")
+else:
+    st.dataframe(top_actions, use_container_width=True, hide_index=True)
