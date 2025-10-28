@@ -18,12 +18,29 @@ if st.sidebar.button("💾 Mémoriser le profil"):
     save_profile(profil)
     st.sidebar.success("Profil sauvegardé.")
 
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🌍 Marchés inclus")
+include_eu = st.sidebar.checkbox("🇫🇷 CAC 40 + 🇩🇪 DAX", value=True)
+include_us = st.sidebar.checkbox("🇺🇸 NASDAQ 100 + S&P 500", value=False)
+include_ls = st.sidebar.checkbox("🧠 LS Exchange (perso)", value=False)
+
 # ---------------- Données marchés ----------------
-MARKETS = [("CAC 40", None)]  # tu pourras en ajouter d’autres facilement
+MARKETS = []
+if include_eu:
+    MARKETS += [("CAC 40", None), ("DAX", None)]
+if include_us:
+    MARKETS += [("NASDAQ 100", None), ("S&P 500", None)]
+if include_ls:
+    MARKETS += [("LS Exchange", None)]
+
+if not MARKETS:
+    st.warning("Aucun marché sélectionné. Active au moins un marché dans le panneau latéral.")
+    st.stop()
+
 data = fetch_all_markets(MARKETS, days_hist=120)
 
 if data.empty:
-    st.warning("Aucune donnée disponible (vérifie la connectivité).")
+    st.warning("Aucune donnée disponible (vérifie la connectivité ou ta sélection de marchés).")
     st.stop()
 
 for c in ["pct_1d","pct_7d","pct_30d"]:
@@ -83,33 +100,7 @@ top_actions = select_top_actions(valid, profile=profil, n=10)
 if top_actions.empty:
     st.info("Aucune opportunité claire détectée aujourd’hui selon l’IA.")
 else:
-    # ✅ Ajout emoji de proximité
-    def emoji_proximite(val):
-        if pd.isna(val): return ""
-        if abs(val) <= 2: return f"{val:+.2f}% 🟢"
-        elif abs(val) <= 5: return f"{val:+.2f}% ⚠️"
-        else: return f"{val:+.2f}% 🔴"
-
-    top_actions["Proximité (%)"] = top_actions["Proximité (%)"].apply(emoji_proximite)
-
-    # ✅ surbrillance douce si "Près de l’entrée" = True
-    def highlight_near_entry(row):
-        if bool(row.get("Près de l’entrée", False)):
-            return ["background-color: rgba(160,160,160,0.15)"] * len(row)
-        return ["" for _ in row]
-
-    cols_affichees = [
-        "Société","Symbole","Cours (€)","Perf 7j (%)","Perf 30j (%)","Tendance",
-        "Risque","Signal","Score IA",
-        "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (€)","Proximité (%)","Près de l’entrée"
-    ]
-    show_df = top_actions[[c for c in cols_affichees if c in top_actions.columns]]
-
-    st.dataframe(
-        show_df.style.apply(highlight_near_entry, axis=1),
-        use_container_width=True,
-        hide_index=True
-    )
+    st.dataframe(top_actions, use_container_width=True, hide_index=True)
 
 # ---------------- Charts simples ----------------
 st.markdown("### 📊 Visualisation rapide")
@@ -154,4 +145,4 @@ if not flop.empty:
         st.markdown(f"- **{r['Société']} ({r['Ticker']})** : {short_news(r)}")
 
 st.divider()
-st.caption("📈 Données issues de Yahoo Finance — IA de tendance propriétaire v6.9")
+st.caption("💡 Astuce : active ou désactive les marchés US dans la barre latérale pour ajuster la vision mondiale.")
