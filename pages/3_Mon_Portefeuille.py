@@ -208,6 +208,35 @@ for _, r in merged.iterrows():
     })
 
 out = pd.DataFrame(rows)
+# --- Ajout de la proximité entrée / objectif ---
+def proximity_info(row):
+    entry = row.get("Entrée (€)")
+    px = row.get("Cours (€)")
+    if not np.isfinite(entry) or not np.isfinite(px) or entry == 0:
+        return np.nan, ""
+    prox = ((px / entry) - 1) * 100
+    if abs(prox) <= 2:
+        emoji = "🟢"
+    elif abs(prox) <= 5:
+        emoji = "⚠️"
+    else:
+        emoji = "🔴"
+    return round(prox, 2), emoji
+
+out[["Proximité (%)", "Signal Entrée"]] = out.apply(lambda r: proximity_info(r), axis=1, result_type="expand")
+
+# --- Mise en forme style ---
+def color_proximity(v):
+    if pd.isna(v): return ""
+    if abs(v) <= 2: return "background-color:#e6f4ea; color:#0b8043"  # vert
+    if abs(v) <= 5: return "background-color:#fff8e1; color:#a67c00"  # jaune
+    return "background-color:#ffebee; color:#b71c1c"  # rouge
+
+def highlight_near_entry(row):
+    if pd.notna(row["Proximité (%)"]) and abs(row["Proximité (%)"]) <= 2:
+        return ["background-color: #fff9c4; font-weight:600"] * len(row)
+    return [""] * len(row)
+
 
 # 💡 Couleurs IA
 def color_decision(val):
@@ -218,7 +247,10 @@ def color_decision(val):
     return ""
 
 st.dataframe(
-    out.style.applymap(color_decision, subset=["Décision IA"]),
+    out.style
+        .apply(highlight_near_entry, axis=1)
+        .applymap(color_decision, subset=["Décision IA"])
+        .applymap(color_proximity, subset=["Proximité (%)"]),
     use_container_width=True, hide_index=True
 )
 
