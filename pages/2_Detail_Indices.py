@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
+import streamlit as st
+import pandas as pd, numpy as np
 from lib import (
     members, fetch_prices, compute_metrics, news_summary,
     decision_label_from_row, style_variations, get_profile_params,
