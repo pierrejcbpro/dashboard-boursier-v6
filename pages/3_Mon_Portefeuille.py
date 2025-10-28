@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-v6.7 — Mon Portefeuille (analyse IA stable + graphique dynamique)
-- Analyse IA basée sur 120 jours d'historique (fixe)
-- Graphique dynamique selon période (1j / 7j / 30j)
-- Synthèse claire (€ + %)
-- Colonne Gain/Perte (€)
-- Version stable dérivée de v6.6
+v6.8 — Mon Portefeuille (benchmark + IA stable)
+- Analyse IA basée sur 120 jours fixes
+- Graphique dynamique avec benchmark (CAC/DAX/S&P/NASDAQ)
+- Comparaison synthétique chiffrée
 """
 
 import os, json, numpy as np, pandas as pd, altair as alt, streamlit as st
@@ -20,30 +18,35 @@ from lib import (
 st.set_page_config(page_title="Mon Portefeuille", page_icon="💼", layout="wide")
 st.title("💼 Mon Portefeuille — PEA & CTO")
 
-# --- Choix période d’analyse
-periode = st.sidebar.radio("Période d’analyse (pour le graphique uniquement)", ["1 jour", "7 jours", "30 jours"], index=0)
+# --- Choix période + benchmark
+periode = st.sidebar.radio("Période (graphique)", ["1 jour", "7 jours", "30 jours"], index=0)
 days_map = {"1 jour": 2, "7 jours": 10, "30 jours": 35}
 days_hist = days_map[periode]
+
+benchmark_label = st.sidebar.selectbox(
+    "Indice de référence (benchmark)",
+    ["CAC 40", "DAX", "S&P 500", "NASDAQ 100"],
+    index=0
+)
+benchmark_tickers = {"CAC 40": "^FCHI", "DAX": "^GDAXI", "S&P 500": "^GSPC", "NASDAQ 100": "^NDX"}
+benchmark_symbol = benchmark_tickers[benchmark_label]
 
 # --- Chargement portefeuille JSON
 DATA_PATH = "data/portfolio.json"
 os.makedirs("data", exist_ok=True)
-
 if not os.path.exists(DATA_PATH):
     pd.DataFrame(columns=["Ticker", "Type", "Qty", "PRU", "Name"]).to_json(
         DATA_PATH, orient="records", indent=2, force_ascii=False
     )
-
 try:
     pf = pd.read_json(DATA_PATH)
 except Exception:
     pf = pd.DataFrame(columns=["Ticker", "Type", "Qty", "PRU", "Name"])
-
 for c, default in [("Ticker", ""), ("Type", "PEA"), ("Qty", 0.0), ("PRU", 0.0), ("Name", "")]:
     if c not in pf.columns:
         pf[c] = default
 
-# --- Outils sauvegarde / import-export
+# --- Boutons gestion
 cols = st.columns(4)
 with cols[0]:
     if st.button("💾 Sauvegarder"):
@@ -99,34 +102,6 @@ with st.expander("🔁 Convertisseur LS Exchange → Yahoo"):
 
 st.divider()
 
-# --- Recherche ajout
-with st.expander("🔎 Recherche par nom / ISIN / WKN / Ticker"):
-    q = st.text_input("Nom ou identifiant", "")
-    t = st.selectbox("Type", ["PEA", "CTO"])
-    qty = st.number_input("Qté", min_value=0.0, step=1.0)
-    if st.button("Rechercher"):
-        if not q.strip():
-            st.warning("Entre un terme.")
-        else:
-            sym, _ = resolve_identifier(q)
-            if sym:
-                st.session_state["search_res"] = [{"symbol": sym, "shortname": company_name_from_ticker(sym)}]
-            else:
-                st.session_state["search_res"] = find_ticker_by_name(q) or []
-    res = st.session_state.get("search_res", [])
-    if res:
-        labels = [f"{r['symbol']} — {r.get('shortname','')}" for r in res]
-        sel = st.selectbox("Résultats", labels)
-        if st.button("➕ Ajouter"):
-            i = labels.index(sel)
-            sym = res[i]["symbol"]
-            nm = res[i].get("shortname", sym)
-            pf = pd.concat([pf, pd.DataFrame([{"Ticker": sym.upper(), "Type": t, "Qty": qty, "PRU": 0.0, "Name": nm}])], ignore_index=True)
-            pf.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
-            st.success(f"Ajouté : {nm} ({sym})"); st.rerun()
-
-st.divider()
-
 # --- Tableau principal
 st.subheader("📝 Mon Portefeuille")
 edited = st.data_editor(
@@ -139,21 +114,10 @@ edited = st.data_editor(
         "Name": st.column_config.TextColumn("Nom"),
     }
 )
-
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("💾 Enregistrer les modifs"):
-        edited["Ticker"] = edited["Ticker"].astype(str).str.upper()
-        edited.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
-        st.success("✅ Sauvegardé."); st.rerun()
-with c2:
-    if st.button("🔄 Rafraîchir"):
-        st.cache_data.clear(); st.rerun()
-
 if edited.empty:
     st.info("Ajoute une action pour commencer."); st.stop()
 
-# --- ⚙️ Analyse IA (basée sur 120 jours fixes)
+# --- Analyse IA stable (120j)
 tickers = edited["Ticker"].dropna().unique().tolist()
 hist_full = fetch_prices(tickers, days=120)
 met = compute_metrics(hist_full)
@@ -188,11 +152,10 @@ for _, r in merged.iterrows():
         "Stop (€)": levels["stop"],
         "Décision IA": dec
     })
-
 out = pd.DataFrame(rows)
 st.dataframe(style_variations(out, ["Perf%"]), use_container_width=True, hide_index=True)
 
-# --- Synthèse & graphique (basé sur période choisie)
+# --- Synthèse performance
 def synthese_perf(df, t):
     df = df[df["Type"] == t]
     if df.empty: return 0, 0
@@ -207,7 +170,6 @@ tot_gain, tot_pct = out["Gain/Perte (€)"].sum(), (
     (out["Gain/Perte (€)"].sum() / (out["Valeur (€)"].sum() - out["Gain/Perte (€)"].sum()) * 100)
     if out["Valeur (€)"].sum() > 0 else 0
 )
-
 st.markdown(f"""
 ### 📊 Synthèse {periode}
 **PEA** : {pea_gain:+.2f} € ({pea_pct:+.2f}%)  
@@ -215,9 +177,9 @@ st.markdown(f"""
 **Total** : {tot_gain:+.2f} € ({tot_pct:+.2f}%)
 """)
 
-# --- Graphique dynamique
-st.subheader(f"📈 Variation du portefeuille — {periode}")
-hist_graph = fetch_prices(tickers, days=days_hist)
+# --- Graphique comparé au benchmark
+st.subheader(f"📈 Portefeuille vs {benchmark_label} ({periode})")
+hist_graph = fetch_prices(tickers + [benchmark_symbol], days=days_hist)
 if hist_graph.empty or "Date" not in hist_graph.columns:
     st.caption("Pas assez d'historique.")
 else:
@@ -233,10 +195,23 @@ else:
         D = pd.concat(df)
         agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()
         tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")
-        full = pd.concat([agg, tot])
-        base = full.groupby("Type").apply(lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100))
-        base.reset_index(drop=True, inplace=True)
-        chart = alt.Chart(base).mark_line(point=False).encode(
+
+        # Benchmark
+        bmk = hist_graph[hist_graph["Ticker"] == benchmark_symbol].copy()
+        bmk = bmk.assign(Type=benchmark_label, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * tot["Valeur"].iloc[0])
+
+        full = pd.concat([agg, tot, bmk])
+        base = full.groupby("Type").apply(lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)).reset_index(drop=True)
+
+        # Comparaison texte
+        perf_port = base[base["Type"]=="Total"]["Pct"].iloc[-1]
+        perf_bmk = base[base["Type"]==benchmark_label]["Pct"].iloc[-1]
+        diff = perf_port - perf_bmk
+        msg = f"✅ Votre portefeuille surperforme le {benchmark_label} de {diff:+.2f}%." if diff > 0 else f"⚠️ Votre portefeuille sous-performe le {benchmark_label} de {abs(diff):.2f}%."
+        st.markdown(f"**{msg}**")
+
+        # Graphique
+        chart = alt.Chart(base).mark_line().encode(
             x="Date:T",
             y=alt.Y("Pct:Q", title="Variation (%)"),
             color=alt.Color("Type:N", scale=alt.Scale(scheme="category10")),
