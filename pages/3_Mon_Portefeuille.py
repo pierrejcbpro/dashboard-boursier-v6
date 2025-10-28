@@ -1,25 +1,23 @@
 # -*- coding: utf-8 -*-
 """
 v6.9 — Mon Portefeuille (benchmark + IA + répartition + volatilité)
-Basé sur ta version stable v6.8, avec :
-- 🥧 Camembert de répartition
-- 💡 Surbrillance IA automatique
-- 🔹 Indicateur visuel de volatilité
+- Profil IA chargé depuis lib.load_profile() (cohérence inter-pages)
+- Surbrillance lisible en thème sombre
+- Tri intelligent par Perf% décroissante
 """
 
 import os, json, numpy as np, pandas as pd, altair as alt, streamlit as st
 from lib import (
     fetch_prices, compute_metrics, price_levels_from_row, decision_label_from_row,
-    style_variations, company_name_from_ticker, get_profile_params,
-    resolve_identifier, find_ticker_by_name, load_mapping, save_mapping,
-    maybe_guess_yahoo
+    style_variations, company_name_from_ticker, get_profile_params, load_profile,
+    resolve_identifier, find_ticker_by_name, load_mapping, save_mapping, maybe_guess_yahoo
 )
 
 # --- Config
 st.set_page_config(page_title="Mon Portefeuille", page_icon="💼", layout="wide")
 st.title("💼 Mon Portefeuille — PEA & CTO")
 
-# --- Choix période + benchmark
+# --- Choix période + benchmark (pour le graphique comparatif)
 periode = st.sidebar.radio("Période (graphique)", ["1 jour", "7 jours", "30 jours"], index=0)
 days_map = {"1 jour": 2, "7 jours": 10, "30 jours": 35}
 days_hist = days_map[periode]
@@ -55,12 +53,18 @@ with cols[0]:
         st.success("✅ Sauvegardé.")
 with cols[1]:
     if st.button("🗑 Réinitialiser"):
-        os.remove(DATA_PATH)
+        try:
+            os.remove(DATA_PATH)
+        except FileNotFoundError:
+            pass
         pd.DataFrame(columns=["Ticker","Type","Qty","PRU","Name"]).to_json(DATA_PATH, orient="records", indent=2)
         st.success("♻️ Réinitialisé."); st.rerun()
 with cols[2]:
-    st.download_button("⬇️ Exporter", json.dumps(pf.to_dict(orient="records"), ensure_ascii=False, indent=2),
-                       file_name="portfolio.json", mime="application/json")
+    st.download_button(
+        "⬇️ Exporter",
+        json.dumps(pf.to_dict(orient="records"), ensure_ascii=False, indent=2),
+        file_name="portfolio.json", mime="application/json"
+    )
 with cols[3]:
     up = st.file_uploader("📥 Importer JSON", type=["json"], label_visibility="collapsed")
     if up:
@@ -163,7 +167,8 @@ hist_full = fetch_prices(tickers, days=120)
 met = compute_metrics(hist_full)
 merged = edited.merge(met, on="Ticker", how="left")
 
-profil = st.session_state.get("profil", "Neutre")
+# Profil IA cohérent avec les autres pages
+profil = load_profile()
 volmax = get_profile_params(profil)["vol_max"]
 
 rows = []
@@ -178,7 +183,7 @@ for _, r in merged.iterrows():
     perf = ((px / pru) - 1) * 100 if (np.isfinite(px) and np.isfinite(pru) and pru > 0) else np.nan
     dec = decision_label_from_row(r, held=True, vol_max=volmax)
 
-    # 🔹 Calcul volatilité simple MA20/MA50
+    # 🔹 Volatilité simple MA20/MA50
     ma20 = float(r.get("MA20", np.nan))
     ma50 = float(r.get("MA50", np.nan))
     if np.isfinite(ma20) and np.isfinite(ma50):
@@ -186,9 +191,9 @@ for _, r in merged.iterrows():
     else:
         vola = np.nan
     if np.isnan(vola): vol_ind = "⚪️"
-    elif vola < 2: vol_ind = "🟢 Faible"
-    elif vola < 5: vol_ind = "🟡 Moyenne"
-    else: vol_ind = "🔴 Élevée"
+    elif vola < 2:    vol_ind = "🟢 Faible"
+    elif vola < 5:    vol_ind = "🟡 Moyenne"
+    else:             vol_ind = "🔴 Élevée"
 
     rows.append({
         "Type": r["Type"],
@@ -208,7 +213,8 @@ for _, r in merged.iterrows():
     })
 
 out = pd.DataFrame(rows)
-# --- Ajout de la proximité entrée / objectif ---
+
+# --- Proximité Entrée (%, + emoji)
 def proximity_info(row):
     entry = row.get("Entrée (€)")
     px = row.get("Cours (€)")
@@ -225,26 +231,28 @@ def proximity_info(row):
 
 out[["Proximité (%)", "Signal Entrée"]] = out.apply(lambda r: proximity_info(r), axis=1, result_type="expand")
 
-# --- Mise en forme style ---
+# --- Styles lisibles (mode sombre ok)
 def color_proximity(v):
     if pd.isna(v): return ""
-    if abs(v) <= 2: return "background-color:#e6f4ea; color:#0b8043"  # vert
-    if abs(v) <= 5: return "background-color:#fff8e1; color:#a67c00"  # jaune
-    return "background-color:#ffebee; color:#b71c1c"  # rouge
+    if abs(v) <= 2: return "background-color: rgba(0,200,0,0.10); color:#0b8043"   # vert doux
+    if abs(v) <= 5: return "background-color: rgba(255,200,0,0.15); color:#a67c00" # jaune doux
+    return "background-color: rgba(255,0,0,0.12); color:#b71c1c"                    # rouge doux
 
 def highlight_near_entry(row):
     if pd.notna(row["Proximité (%)"]) and abs(row["Proximité (%)"]) <= 2:
-        return ["background-color: #fff9c4; font-weight:600"] * len(row)
+        return ["background-color: rgba(255,255,255,0.07); font-weight:600"] * len(row)
     return [""] * len(row)
 
-
-# 💡 Couleurs IA
 def color_decision(val):
     if pd.isna(val): return ""
-    if "Acheter" in val: return "background-color: rgba(0,200,0,0.2);"
-    if "Vendre" in val: return "background-color: rgba(255,0,0,0.2);"
-    if "Surveiller" in val: return "background-color: rgba(0,100,255,0.2);"
+    if "Acheter" in val:    return "background-color: rgba(0,200,0,0.15);"
+    if "Vendre" in val:     return "background-color: rgba(255,0,0,0.15);"
+    if "Surveiller" in val: return "background-color: rgba(0,100,255,0.15);"
     return ""
+
+# --- Tri intelligent avant affichage
+if "Perf%" in out.columns:
+    out = out.sort_values("Perf%", ascending=False)
 
 st.dataframe(
     out.style
@@ -265,10 +273,10 @@ def synthese_perf(df, t):
 
 pea_gain, pea_pct = synthese_perf(out, "PEA")
 cto_gain, cto_pct = synthese_perf(out, "CTO")
-tot_gain, tot_pct = out["Gain/Perte (€)"].sum(), (
-    (out["Gain/Perte (€)"].sum() / (out["Valeur (€)"].sum() - out["Gain/Perte (€)"].sum()) * 100)
-    if out["Valeur (€)"].sum() > 0 else 0
-)
+tot_gain = out["Gain/Perte (€)"].sum()
+tot_val  = out["Valeur (€)"].sum()
+tot_pct  = (tot_gain / (tot_val - tot_gain) * 100) if tot_val > 0 else 0
+
 st.markdown(f"""
 ### 📊 Synthèse {periode}
 **PEA** : {pea_gain:+.2f} € ({pea_pct:+.2f}%)  
@@ -276,7 +284,7 @@ st.markdown(f"""
 **Total** : {tot_gain:+.2f} € ({tot_pct:+.2f}%)
 """)
 
-# --- 🥧 Graphique de répartition du portefeuille
+# --- 🥧 Répartition portefeuille
 st.subheader("📊 Répartition du portefeuille")
 repart = out.groupby("Nom").agg({"Valeur (€)":"sum"}).reset_index()
 if not repart.empty:
@@ -295,30 +303,41 @@ hist_graph = fetch_prices(tickers + [benchmark_symbol], days=days_hist)
 if hist_graph.empty or "Date" not in hist_graph.columns:
     st.caption("Pas assez d'historique.")
 else:
-    df = []
+    df_val = []
     for _, r in edited.iterrows():
-        t, q, pru, tp = r["Ticker"], r["Qty"], r["PRU"], r["Type"]
-        d = hist_graph[hist_graph["Ticker"] == t].copy()
+        tkr, q, pru, tp = r["Ticker"], r["Qty"], r["PRU"], r["Type"]
+        d = hist_graph[hist_graph["Ticker"] == tkr].copy()
         if d.empty: continue
         d["Valeur"] = d["Close"] * q
         d["Type"] = tp
-        df.append(d[["Date","Valeur","Type"]])
-    if df:
-        D = pd.concat(df)
+        df_val.append(d[["Date","Valeur","Type"]])
+    if df_val:
+        D = pd.concat(df_val)
         agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()
         tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")
 
         bmk = hist_graph[hist_graph["Ticker"] == benchmark_symbol].copy()
-        bmk = bmk.assign(Type=benchmark_label, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * tot["Valeur"].iloc[0])
+        # normalise le benchmark sur la valeur initiale du portefeuille total
+        base_val = float(tot["Valeur"].iloc[0]) if not tot.empty else 1.0
+        bmk = bmk.assign(Type=benchmark_label, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * base_val)
 
         full = pd.concat([agg, tot, bmk])
-        base = full.groupby("Type").apply(lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)).reset_index(drop=True)
+        base = full.groupby("Type").apply(
+            lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)
+        ).reset_index(drop=True)
 
-        perf_port = base[base["Type"]=="Total"]["Pct"].iloc[-1]
-        perf_bmk = base[base["Type"]==benchmark_label]["Pct"].iloc[-1]
-        diff = perf_port - perf_bmk
-        msg = f"✅ Votre portefeuille surperforme le {benchmark_label} de {diff:+.2f}%." if diff > 0 else f"⚠️ Votre portefeuille sous-performe le {benchmark_label} de {abs(diff):.2f}%."
-        st.markdown(f"**{msg}**")
+        try:
+            perf_port = base[base["Type"]=="Total"]["Pct"].iloc[-1]
+            perf_bmk  = base[base["Type"]==benchmark_label]["Pct"].iloc[-1]
+            diff = perf_port - perf_bmk
+            msg = (
+                f"✅ Votre portefeuille surperforme le {benchmark_label} de {diff:+.2f}%."
+                if diff > 0 else
+                f"⚠️ Votre portefeuille sous-performe le {benchmark_label} de {abs(diff):.2f}%."
+            )
+            st.markdown(f"**{msg}**")
+        except Exception:
+            pass
 
         chart = alt.Chart(base).mark_line().encode(
             x="Date:T",
