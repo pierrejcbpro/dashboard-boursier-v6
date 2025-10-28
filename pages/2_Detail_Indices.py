@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import streamlit as st, pandas as pd
+import streamlit as st, pandas as pd, numpy as np
 from lib import (members, fetch_prices, compute_metrics, news_summary, decision_label_from_row,
                  style_variations, get_profile_params, price_levels_from_row, load_watchlist_ls, company_name_from_ticker)
 
@@ -36,6 +36,7 @@ def enrich_table(df):
         txt,score,_=news_summary(name, tick)
         dec=decision_label_from_row(r, held=False, vol_max=volmax)
         rows.append({"Nom":name,"Ticker":tick,
+                     "Cours": round(float(r.get("Close", np.nan)),2) if pd.notna(r.get("Close", np.nan)) else None,
                      "Écart MA20 %":round((r.get("gap20",0) or 0)*100,2),
                      "Écart MA50 %":round((r.get("gap50",0) or 0)*100,2),
                      "Entrée (€)":levels["entry"],"Objectif (€)":levels["target"],"Stop (€)":levels["stop"],
@@ -43,8 +44,6 @@ def enrich_table(df):
     return pd.DataFrame(rows)
 
 st.subheader("Top 5 tendance haussière")
-st.dataframe(style_variations(enrich_table(top5), ["Écart MA20 %","Écart MA50 %","Sentiment"]),
-             use_container_width=True, hide_index=True)
+st.dataframe(style_variations(enrich_table(top5), ["Écart MA20 %","Écart MA50 %","Sentiment"]), use_container_width=True, hide_index=True)
 st.subheader("Top 5 tendance baissière")
-st.dataframe(style_variations(enrich_table(low5), ["Écart MA20 %","Écart MA50 %","Sentiment"]),
-             use_container_width=True, hide_index=True)
+st.dataframe(style_variations(enrich_table(low5), ["Écart MA20 %","Écart MA50 %","Sentiment"]), use_container_width=True, hide_index=True)
