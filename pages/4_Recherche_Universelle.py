@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-v6.9.1 — Recherche universelle (alignée avec Portefeuille)
+v6.9.2 — Recherche universelle
 - Recherche intégrée (Nom / Ticker LS / ISIN / WKN / Yahoo)
 - Mémoire de la dernière recherche
 - Analyse IA complète (MA20/MA50/ATR, Entrée / Objectif / Stop, Décision IA)
 - Graphique avec lignes de niveaux (Jour / 7j / 30j / 1 an / 5 ans)
-- Actualités ciblées (liens cliquables + résumé court)
+- Actualités ciblées (liens cliquables + résumé court + date)
 """
 
 import streamlit as st, pandas as pd, numpy as np, altair as alt, requests, html, re
+from datetime import datetime
 from lib import (
     fetch_prices, compute_metrics, price_levels_from_row, decision_label_from_row,
     company_name_from_ticker, get_profile_params, resolve_identifier,
@@ -36,7 +37,7 @@ def get_last_search(default_period="30 jours"):
     )
 
 def google_news_titles_and_links(q, lang="fr", limit=6):
-    """Mini fetch Google News RSS → [(title, link)]."""
+    """Mini fetch Google News RSS → [(title, link, pubdate)]."""
     url = f"https://news.google.com/rss/search?q={requests.utils.quote(q)}&hl={lang}-{lang.upper()}&gl={lang.upper()}&ceid={lang.upper()}:{lang.upper()}"
     try:
         xml = requests.get(url, timeout=10).text
@@ -45,10 +46,17 @@ def google_news_titles_and_links(q, lang="fr", limit=6):
         for it in items:
             tt = re.search(r"<title><!\[CDATA\[(.*?)\]\]></title>|<title>(.*?)</title>", it, flags=re.S)
             lk = re.search(r"<link>(.*?)</link>", it, flags=re.S)
+            dt = re.search(r"<pubDate>(.*?)</pubDate>", it)
             t = html.unescape((tt.group(1) or tt.group(2) or "").strip()) if tt else ""
             l = (lk.group(1).strip() if lk else "")
+            d = ""
+            if dt:
+                try:
+                    d = datetime.strptime(dt.group(1).strip(), "%a, %d %b %Y %H:%M:%S %Z").strftime("%d/%m/%Y")
+                except Exception:
+                    d = dt.group(1).strip()
             if t and l:
-                out.append((t, l))
+                out.append((t, l, d))
             if len(out) >= limit:
                 break
         return out
@@ -61,7 +69,7 @@ def short_news_summary(titles):
     if not titles:
         return "Pas d’actualité saillante — mouvement possiblement technique (flux, arbitrages, macro)."
     s = 0
-    for t, _ in titles:
+    for t, _, _ in titles:
         low = t.lower()
         if any(k in low for k in pos_kw): s += 1
         if any(k in low for k in neg_kw): s -= 1
@@ -105,10 +113,9 @@ if not symbol:
     st.info("🔍 Entre un nom ou ticker ci-dessus pour lancer l’analyse IA complète.")
     st.stop()
 
-# ---------------- TELECHARGEMENT DONNÉES ----------------
+# ---------------- DONNÉES ----------------
 days_map = {"Jour": 5, "7 jours": 10, "30 jours": 40, "1 an": 400, "5 ans": 1300}
 days_graph = days_map[period]
-
 hist_graph = fetch_prices([symbol], days=days_graph)
 hist_full = fetch_prices([symbol], days=120)
 metrics = compute_metrics(hist_full)
@@ -120,7 +127,7 @@ if metrics.empty:
 row = metrics.iloc[0]
 name = company_name_from_ticker(symbol)
 
-# ---------------- AFFICHAGE ANALYSE ----------------
+# ---------------- ANALYSE ----------------
 col1, col2, col3, col4 = st.columns([1.6, 1, 1, 1])
 with col1:
     st.markdown(f"## {name}  \n`{symbol}`")
@@ -180,8 +187,9 @@ if news:
     st.markdown("**Résumé IA (2–3 lignes)**")
     st.info(short_news_summary(news))
     st.markdown("**Articles**")
-    for title, link in news:
-        st.markdown(f"- [{title}]({link})")
+    for title, link, date in news:
+        date_txt = f" *(publié le {date})*" if date else ""
+        st.markdown(f"- [{title}]({link}){date_txt}")
 else:
     st.caption("Aucune actualité disponible pour cette valeur.")
 
