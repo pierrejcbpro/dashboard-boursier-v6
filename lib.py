@@ -110,7 +110,7 @@ _PARIS = {"AIR","ORA","MC","TTE","BNP","SGO","ENGI","SU","DG","ACA","GLE","RI","
 def guess_yahoo_from_ls(ticker: str):
     if not ticker: return None
     t = _norm(ticker)
-    if "." in t and not t.endswith(".LS"):   # déjà suffixé
+    if "." in t and not t.endswith(".LS"):   # déjà suffixé côté Yahoo
         return t
     if t.endswith(".LS"):                    # Londres
         return f"{t[:-3]}.L"
@@ -216,10 +216,9 @@ def _extract_name_ticker(tables):
 @lru_cache(maxsize=8)
 def members_cac40():
     df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/CAC_40"))
-    df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.PA}")
+    # suffixe Yahoo .PA si absent
+    df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.PA")
     df["index"]="CAC 40"
-    # Correction d’accolade accidentelle ci-dessus :
-    df["ticker"]=df["ticker"].str.replace("}", "", regex=False)
     return df
 
 def members(index_name: str):
@@ -327,7 +326,7 @@ def company_name_from_ticker(ticker: str) -> str:
         t = yf.Ticker(ticker)
         name = None
         try:
-            name = t.fast_info.get("shortName", None)  # selon versions yfinance
+            name = t.fast_info.get("shortName", None)
         except Exception:
             pass
         if not name:
@@ -459,7 +458,7 @@ def style_variations(df, cols):
 # =========================
 # AGGRÉGATION MARCHÉS (CAC40 + LS)
 # =========================
-def fetch_all_markets(markets, days_hist=90):
+def fetch_all_markets(markets, days_hist=120):
     """
     markets: liste de tuples (Indice, source) – source ignorée pour l’instant
     Supporte: "CAC 40" et "LS Exchange" (watchlist locale)
@@ -487,8 +486,8 @@ def fetch_all_markets(markets, days_hist=90):
 # =========================
 def select_top_actions(df, profile="Neutre", n=5):
     """
-    Retourne les 4-5 meilleures actions selon IA :
-    - tendance, momentum, volatilité, décision IA
+    Retourne les meilleures actions (≤ n) selon IA :
+    - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close), décision IA
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -497,44 +496,51 @@ def select_top_actions(df, profile="Neutre", n=5):
     vol_max = p["vol_max"]
 
     data = df.copy()
-    data = data.dropna(subset=["Close", "trend_score", "ATR14"])
+    # sécurités colonnes
+    for c in ["trend_score","pct_7d","pct_30d","ATR14","Close"]:
+        if c not in data.columns: data[c] = np.nan
 
-    # Calcul du score IA
+    data = data.dropna(subset=["Close"])
     data["Volatilité"] = data["ATR14"] / data["Close"]
+
+    # Score IA (pondérations simples et lisibles)
     data["IA_Score"] = (
-        (data["trend_score"] * 50)
-        + (data.get("pct_30d", 0) * 100)
-        + (data.get("pct_7d", 0) * 50)
-        - (data["Volatilité"] * 10)
+        (data["trend_score"].fillna(0) * 50.0) +
+        (data["pct_30d"].fillna(0) * 100.0) +
+        (data["pct_7d"].fillna(0) * 50.0) -
+        (data["Volatilité"].fillna(0) * 10.0)
     )
 
-    # Application de la décision IA
+    # Décision IA (pour “Acheter”)
     data["Décision_IA"] = data.apply(lambda r: decision_label_from_row(r, held=False, vol_max=vol_max), axis=1)
-
-    # Filtrage : actions à acheter et vol raisonnable
-    filt = (data["Décision_IA"].str.contains("🟢")) & (data["Volatilité"] <= vol_max * 1.5)
+    filt = (data["Décision_IA"].str.contains("🟢", na=False)) & (data["Volatilité"] <= vol_max * 1.5)
     data = data[filt].sort_values("IA_Score", ascending=False)
 
-    # Top 5
-    top = data.head(n).copy()
+    # Calcul des niveaux
+    def _levels(r):
+        lev = price_levels_from_row(r, profile)
+        return pd.Series({"Entrée (€)": lev["entry"], "Objectif (€)": lev["target"], "Stop (€)": lev["stop"]})
+
+    levs = data.apply(_levels, axis=1)
+
+    top = pd.concat([data.reset_index(drop=True), levs.reset_index(drop=True)], axis=1).head(n)
 
     # Colonnes lisibles
-    top = top[["Ticker", "Close", "MA20", "MA50", "trend_score", "pct_7d", "pct_30d", "Volatilité", "IA_Score", "Décision_IA"]]
-    top.rename(columns={
-        "Ticker": "Symbole",
-        "Close": "Cours (€)",
-        "MA20": "MA20",
-        "MA50": "MA50",
-        "trend_score": "Tendance",
-        "pct_7d": "Perf 7j (%)",
-        "pct_30d": "Perf 30j (%)",
-        "Volatilité": "Risque",
-        "IA_Score": "Score IA",
-        "Décision_IA": "Signal",
-    }, inplace=True)
-    top["Perf 7j (%)"] = (top["Perf 7j (%)"] * 100).round(2)
-    top["Perf 30j (%)"] = (top["Perf 30j (%)"] * 100).round(2)
-    top["Risque"] = (top["Risque"] * 100).round(2)
-    top["Score IA"] = top["Score IA"].round(2)
-    return top.reset_index(drop=True)
+    keep = ["Ticker","name","Close","MA20","MA50","trend_score","pct_7d","pct_30d","Volatilité","IA_Score","Décision_IA","Entrée (€)","Objectif (€)","Stop (€)"]
+    for k in keep:
+        if k not in top.columns:
+            top[k] = np.nan
+    top = top[keep]
 
+    top.rename(columns={
+        "Ticker":"Symbole","name":"Société","Close":"Cours (€)","trend_score":"Tendance",
+        "pct_7d":"Perf 7j (%)","pct_30d":"Perf 30j (%)","Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
+    }, inplace=True)
+
+    # Mise en forme %
+    top["Perf 7j (%)"]   = (top["Perf 7j (%)"]*100).round(2)
+    top["Perf 30j (%)"]  = (top["Perf 30j (%)"]*100).round(2)
+    top["Risque"]        = (top["Risque"]*100).round(2)
+    top["Score IA"]      = top["Score IA"].round(2)
+    top["Cours (€)"]     = top["Cours (€)"].round(2)
+    return top.reset_index(drop=True)
