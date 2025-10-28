@@ -482,15 +482,17 @@ def fetch_all_markets(markets, days_hist=120):
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
 
 # =========================
-# SÉLECTION IA OPTIMALE (TOP 10) — avec proximité d’entrée (% et surbrillance)
+# SÉLECTION IA OPTIMALE (TOP 10)
 # =========================
 def select_top_actions(df, profile="Neutre", n=10):
     """
-    Retourne les meilleures actions (≤ n) selon IA :
-    - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close), décision IA
-    - calcule le potentiel en € (Objectif - Entrée)
-    - affiche la proximité d’entrée en %
-    - surbrille les lignes prêtes à acheter
+    Sélectionne les meilleures actions selon l'analyse IA :
+    - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close)
+    - décision IA (🟢 / 🔴 / 🟠)
+    - calcule Potentiel (€) = Objectif - Entrée
+    - calcule Proximité (%) = (Cours / Entrée - 1) * 100
+    - surbrille les lignes prêtes à entrer (|Proximité| < 2 %)
+    - ajoute un emoji visuel selon la proximité
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -506,7 +508,7 @@ def select_top_actions(df, profile="Neutre", n=10):
     data = data.dropna(subset=["Close"])
     data["Volatilité"] = data["ATR14"] / data["Close"]
 
-    # Score IA global
+    # Score IA global pondéré
     data["IA_Score"] = (
         (data["trend_score"].fillna(0) * 50.0)
         + (data["pct_30d"].fillna(0) * 100.0)
@@ -551,7 +553,7 @@ def select_top_actions(df, profile="Neutre", n=10):
         "Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
     }, inplace=True)
 
-    # Mise en forme numérique
+    # Nettoyage et arrondis
     top["Perf 7j (%)"]   = (top["Perf 7j (%)"]*100).round(2)
     top["Perf 30j (%)"]  = (top["Perf 30j (%)"]*100).round(2)
     top["Risque"]        = (top["Risque"]*100).round(2)
@@ -559,6 +561,15 @@ def select_top_actions(df, profile="Neutre", n=10):
     top["Cours (€)"]     = top["Cours (€)"].round(2)
     top["Potentiel (€)"] = top["Potentiel (€)"].round(2)
     top["Proximité (%)"] = top["Proximité (%)"].round(2)
+
+    # Emoji de proximité
+    def proximity_emoji(v):
+        if pd.isna(v): return "❓"
+        if abs(v) <= 2: return "🟢"
+        if abs(v) <= 5: return "⚠️"
+        return "🔴"
+
+    top["Signal Entrée"] = top["Proximité (%)"].apply(proximity_emoji)
 
     # Marquage "Prêt à entrer"
     def is_near_entry(r):
@@ -588,4 +599,3 @@ def select_top_actions(df, profile="Neutre", n=10):
         pass
 
     return top.reset_index(drop=True)
-
