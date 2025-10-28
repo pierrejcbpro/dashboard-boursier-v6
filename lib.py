@@ -192,7 +192,7 @@ def find_ticker_by_name(company_name: str, prefer_markets=("Paris","XETRA","Fran
     return [r for _, r in ranked]
 
 # =========================
-# MEMBRES D’INDICES (Minimal viable pour CAC40 + LS)
+# MEMBRES D’INDICES — CAC40, DAX, NASDAQ100, S&P500
 # =========================
 @lru_cache(maxsize=32)
 def _read_tables(url: str):
@@ -216,13 +216,40 @@ def _extract_name_ticker(tables):
 @lru_cache(maxsize=8)
 def members_cac40():
     df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/CAC_40"))
-    # suffixe Yahoo .PA si absent
     df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.PA")
     df["index"]="CAC 40"
     return df
 
+@lru_cache(maxsize=8)
+def members_dax():
+    df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/DAX"))
+    df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.DE")
+    df["index"]="DAX"
+    return df
+
+@lru_cache(maxsize=8)
+def members_nasdaq100():
+    df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/NASDAQ-100"))
+    # Yahoo utilise tel quel (AAPL, MSFT...). Pas de suffixe à ajouter.
+    df["index"]="NASDAQ 100"
+    return df
+
+@lru_cache(maxsize=8)
+def members_sp500():
+    df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"))
+    # Ajustement ponctuel pour Yahoo (BRK.B -> BRK-B, BF.B -> BF-B, etc.)
+    def _fix(sym:str):
+        sym = str(sym).strip().upper()
+        return sym.replace(".", "-")
+    df["ticker"]=df["ticker"].apply(_fix)
+    df["index"]="S&P 500"
+    return df
+
 def members(index_name: str):
     if index_name=="CAC 40": return members_cac40()
+    if index_name=="DAX": return members_dax()
+    if index_name=="NASDAQ 100": return members_nasdaq100()
+    if index_name=="S&P 500": return members_sp500()
     return pd.DataFrame(columns=["ticker","name","index"])
 
 # =========================
@@ -438,8 +465,13 @@ def price_levels_from_row(row, profile="Neutre"):
     px=float(row.get("Close", math.nan))
     ma20=float(row.get("MA20", math.nan)) if pd.notna(row.get("MA20", math.nan)) else math.nan
     base=ma20 if math.isfinite(ma20) else px
-    if not math.isfinite(base): return {"entry":math.nan,"target":math.nan,"stop":math.nan}
-    return {"entry":round(base*p["entry_mult"],2),"target":round(base*p["target_mult"],2),"stop":round(base*p["stop_mult"],2)}
+    if not math.isfinite(base): 
+        return {"entry":math.nan,"target":math.nan,"stop":math.nan}
+    return {
+        "entry": round(base*p["entry_mult"], 2),
+        "target": round(base*p["target_mult"], 2),
+        "stop":   round(base*p["stop_mult"],   2),
+    }
 
 # =========================
 # STYLE TABLEAUX (couleurs)
@@ -456,41 +488,52 @@ def style_variations(df, cols):
     return sty
 
 # =========================
-# AGGRÉGATION MARCHÉS (CAC40 + LS)
+# AGGRÉGATION MARCHÉS (multi-indices)
 # =========================
 def fetch_all_markets(markets, days_hist=120):
     """
-    markets: liste de tuples (Indice, source) – source ignorée pour l’instant
-    Supporte: "CAC 40" et "LS Exchange" (watchlist locale)
+    markets: liste de tuples (Indice, source) – ex:
+      [("CAC 40", None), ("DAX", None), ("NASDAQ 100", None), ("S&P 500", None)]
     """
     frames=[]
     for idx, _ in markets:
         if idx=="CAC 40":
-            mem=members("CAC 40")
+            mem=members_cac40()
+        elif idx=="DAX":
+            mem=members_dax()
+        elif idx=="NASDAQ 100":
+            mem=members_nasdaq100()
+        elif idx=="S&P 500":
+            mem=members_sp500()
         elif idx=="LS Exchange":
             ls_list = load_watchlist_ls()
             tickers=[maybe_guess_yahoo(x) or x for x in ls_list] if ls_list else []
             mem=pd.DataFrame({"ticker": tickers, "name": ls_list})
         else:
             continue
-        if mem.empty: continue
+
+        if mem.empty: 
+            continue
+
         px=fetch_prices(mem["ticker"].tolist(), days=days_hist)
-        if px.empty: continue
+        if px.empty: 
+            continue
+
         met=compute_metrics(px).merge(mem, left_on="Ticker", right_on="ticker", how="left")
         met["Indice"]=idx
         frames.append(met)
+
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
 
 # =========================
-# SÉLECTION IA OPTIMALE (TOP 10) — Potentiel € + Proximité %
+# SÉLECTION IA OPTIMALE (TOP N)
 # =========================
 def select_top_actions(df, profile="Neutre", n=10):
     """
     Retourne les meilleures actions (≤ n) selon IA :
     - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close), décision IA
-    - Potentiel en **euros** (Objectif - Entrée)
-    - Proximité **en %** entre cours et entrée
-    - Indicateur booléen 'Près de l’entrée'
+    - calcule le potentiel en € (Objectif - Entrée)
+    - expose la proximité d’entrée (%)
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -506,7 +549,7 @@ def select_top_actions(df, profile="Neutre", n=10):
     data = data.dropna(subset=["Close"])
     data["Volatilité"] = data["ATR14"] / data["Close"]
 
-    # Score IA global
+    # Score IA global (pondérations douces)
     data["IA_Score"] = (
         (data["trend_score"].fillna(0) * 50.0)
         + (data["pct_30d"].fillna(0) * 100.0)
@@ -518,23 +561,19 @@ def select_top_actions(df, profile="Neutre", n=10):
     filt = (data["Décision_IA"].str.contains("🟢", na=False)) & (data["Volatilité"] <= vol_max * 1.5)
     data = data[filt].sort_values("IA_Score", ascending=False)
 
-    # Niveaux + métriques d'opportunité
     def _levels(r):
         lev = price_levels_from_row(r, profile)
-        entry = lev["entry"]
-        target = lev["target"]
-        stop = lev["stop"]
-        potentiel_eur = None
+        ecart_euro = None
         prox_pct = None
-        if (entry is not None) and (target is not None) and (entry > 0):
-            potentiel_eur = target - entry
-        if (entry is not None) and (entry > 0) and (r.get("Close") is not None):
-            prox_pct = ((r["Close"] / entry) - 1) * 100
+        if lev["entry"] and lev["target"] and lev["entry"] > 0:
+            ecart_euro = lev["target"] - lev["entry"]
+        if lev["entry"] and r.get("Close") and lev["entry"] > 0:
+            prox_pct = ((r["Close"] / lev["entry"]) - 1) * 100
         return pd.Series({
-            "Entrée (€)": entry,
-            "Objectif (€)": target,
-            "Stop (€)": stop,
-            "Potentiel (€)": potentiel_eur,
+            "Entrée (€)": lev["entry"],
+            "Objectif (€)": lev["target"],
+            "Stop (€)": lev["stop"],
+            "Potentiel (€)": ecart_euro,
             "Proximité (%)": prox_pct
         })
 
@@ -555,7 +594,7 @@ def select_top_actions(df, profile="Neutre", n=10):
         "Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
     }, inplace=True)
 
-    # Mise en forme
+    # Mise en forme numérique
     top["Perf 7j (%)"]   = (top["Perf 7j (%)"]*100).round(2)
     top["Perf 30j (%)"]  = (top["Perf 30j (%)"]*100).round(2)
     top["Risque"]        = (top["Risque"]*100).round(2)
@@ -563,11 +602,5 @@ def select_top_actions(df, profile="Neutre", n=10):
     top["Cours (€)"]     = top["Cours (€)"].round(2)
     top["Potentiel (€)"] = top["Potentiel (€)"].round(2)
     top["Proximité (%)"] = top["Proximité (%)"].round(2)
-
-    # Indicateur "Près de l’entrée"
-    def is_near_entry(r):
-        p = r.get("Proximité (%)")
-        return np.isfinite(p) and abs(p) <= 2.0
-    top["Près de l’entrée"] = top.apply(is_near_entry, axis=1)
 
     return top.reset_index(drop=True)
