@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-v6.8 — Mon Portefeuille (benchmark + IA stable)
-- Analyse IA basée sur 120 jours fixes
-- Graphique dynamique avec benchmark (CAC/DAX/S&P/NASDAQ)
-- Comparaison synthétique chiffrée
+v6.9 — Mon Portefeuille (benchmark + IA + répartition + volatilité)
+Basé sur ta version stable v6.8, avec :
+- 🥧 Camembert de répartition
+- 💡 Surbrillance IA automatique
+- 🔹 Indicateur visuel de volatilité
 """
 
 import os, json, numpy as np, pandas as pd, altair as alt, streamlit as st
@@ -130,7 +131,6 @@ with st.expander("🔎 Recherche par nom / ISIN / WKN / Ticker"):
 
 st.divider()
 
-
 # --- Tableau principal
 st.subheader("📝 Mon Portefeuille")
 edited = st.data_editor(
@@ -177,6 +177,19 @@ for _, r in merged.iterrows():
     gain_eur = (px - pru) * qty if np.isfinite(px) and np.isfinite(pru) else np.nan
     perf = ((px / pru) - 1) * 100 if (np.isfinite(px) and np.isfinite(pru) and pru > 0) else np.nan
     dec = decision_label_from_row(r, held=True, vol_max=volmax)
+
+    # 🔹 Calcul volatilité simple MA20/MA50
+    ma20 = float(r.get("MA20", np.nan))
+    ma50 = float(r.get("MA50", np.nan))
+    if np.isfinite(ma20) and np.isfinite(ma50):
+        vola = abs(ma20 - ma50) / ma50 * 100
+    else:
+        vola = np.nan
+    if np.isnan(vola): vol_ind = "⚪️"
+    elif vola < 2: vol_ind = "🟢 Faible"
+    elif vola < 5: vol_ind = "🟡 Moyenne"
+    else: vol_ind = "🔴 Élevée"
+
     rows.append({
         "Type": r["Type"],
         "Nom": name,
@@ -187,13 +200,27 @@ for _, r in merged.iterrows():
         "Valeur (€)": round(val,2) if np.isfinite(val) else None,
         "Gain/Perte (€)": round(gain_eur,2) if np.isfinite(gain_eur) else None,
         "Perf%": round(perf,2) if np.isfinite(perf) else None,
+        "Volatilité": vol_ind,
         "Entrée (€)": levels["entry"],
         "Objectif (€)": levels["target"],
         "Stop (€)": levels["stop"],
         "Décision IA": dec
     })
+
 out = pd.DataFrame(rows)
-st.dataframe(style_variations(out, ["Perf%"]), use_container_width=True, hide_index=True)
+
+# 💡 Couleurs IA
+def color_decision(val):
+    if pd.isna(val): return ""
+    if "Acheter" in val: return "background-color: rgba(0,200,0,0.2);"
+    if "Vendre" in val: return "background-color: rgba(255,0,0,0.2);"
+    if "Surveiller" in val: return "background-color: rgba(0,100,255,0.2);"
+    return ""
+
+st.dataframe(
+    out.style.applymap(color_decision, subset=["Décision IA"]),
+    use_container_width=True, hide_index=True
+)
 
 # --- Synthèse performance
 def synthese_perf(df, t):
@@ -217,6 +244,19 @@ st.markdown(f"""
 **Total** : {tot_gain:+.2f} € ({tot_pct:+.2f}%)
 """)
 
+# --- 🥧 Graphique de répartition du portefeuille
+st.subheader("📊 Répartition du portefeuille")
+repart = out.groupby("Nom").agg({"Valeur (€)":"sum"}).reset_index()
+if not repart.empty:
+    chart = alt.Chart(repart).mark_arc(outerRadius=120).encode(
+        theta="Valeur (€):Q",
+        color=alt.Color("Nom:N", legend=None),
+        tooltip=["Nom:N","Valeur (€):Q"]
+    )
+    st.altair_chart(chart, use_container_width=True)
+else:
+    st.caption("Aucune donnée pour le camembert.")
+
 # --- Graphique comparé au benchmark
 st.subheader(f"📈 Portefeuille vs {benchmark_label} ({periode})")
 hist_graph = fetch_prices(tickers + [benchmark_symbol], days=days_hist)
@@ -236,21 +276,18 @@ else:
         agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()
         tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")
 
-        # Benchmark
         bmk = hist_graph[hist_graph["Ticker"] == benchmark_symbol].copy()
         bmk = bmk.assign(Type=benchmark_label, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * tot["Valeur"].iloc[0])
 
         full = pd.concat([agg, tot, bmk])
         base = full.groupby("Type").apply(lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)).reset_index(drop=True)
 
-        # Comparaison texte
         perf_port = base[base["Type"]=="Total"]["Pct"].iloc[-1]
         perf_bmk = base[base["Type"]==benchmark_label]["Pct"].iloc[-1]
         diff = perf_port - perf_bmk
         msg = f"✅ Votre portefeuille surperforme le {benchmark_label} de {diff:+.2f}%." if diff > 0 else f"⚠️ Votre portefeuille sous-performe le {benchmark_label} de {abs(diff):.2f}%."
         st.markdown(f"**{msg}**")
 
-        # Graphique
         chart = alt.Chart(base).mark_line().encode(
             x="Date:T",
             y=alt.Y("Pct:Q", title="Variation (%)"),
