@@ -2,6 +2,10 @@
 """
 lib.py — Bibliothèque centrale du Dashboard Boursier
 Version stable compatible v6.9
+Inclut :
+- Fonctions d’import, recherche, et indicateurs techniques
+- Gestion du profil IA
+- Surbrillance adaptative clair/sombre
 """
 
 import os, json, math, requests, numpy as np, pandas as pd, yfinance as yf
@@ -10,12 +14,14 @@ from functools import lru_cache
 # --- Chemins
 DATA_DIR = "data"
 MAPPING_PATH = os.path.join(DATA_DIR, "id_mapping.json")
+WL_PATH = os.path.join(DATA_DIR, "watchlist_ls.json")
 PROFILE_PATH = os.path.join(DATA_DIR, "profile.json")
 LAST_SEARCH_PATH = os.path.join(DATA_DIR, "last_search.json")
 for p in [DATA_DIR]:
     os.makedirs(p, exist_ok=True)
 for p, default in [
     (MAPPING_PATH, {}),
+    (WL_PATH, []),
     (PROFILE_PATH, {"profil": "Neutre"}),
     (LAST_SEARCH_PATH, {"last": "TTE.PA"}),
 ]:
@@ -47,7 +53,7 @@ def save_profile(p):
     except Exception:
         pass
 
-# --- Mapping LS / Yahoo
+# --- Mapping
 def load_mapping():
     try:
         return json.load(open(MAPPING_PATH, "r", encoding="utf-8"))
@@ -57,6 +63,7 @@ def load_mapping():
 def save_mapping(m):
     json.dump(m, open(MAPPING_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
+# --- Conversion LS / Yahoo
 _PARIS = {"AIR","ORA","MC","TTE","BNP","SGO","ENGI","SU","DG","ACA","GLE","RI","KER","HO","EN","CAP","AI","PUB","VIE","VIV","STM"}
 
 def guess_yahoo_from_ls(ticker: str):
@@ -160,7 +167,7 @@ def price_levels_from_row(row, profile="Neutre"):
     if not np.isfinite(base): return {"entry": np.nan, "target": np.nan, "stop": np.nan}
     return {"entry": round(base*p["entry_mult"],2), "target": round(base*p["target_mult"],2), "stop": round(base*p["stop_mult"],2)}
 
-# --- Thème clair/sombre + couleurs adaptatives
+# --- Styles adaptatifs clair/sombre
 def detect_dark_mode():
     try:
         import streamlit as st
