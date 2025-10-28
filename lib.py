@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 import os, json, math, requests, numpy as np, pandas as pd, yfinance as yf
 from functools import lru_cache
@@ -201,20 +200,36 @@ def fetch_prices(tickers, days=120):
     return fetch_prices_cached(tuple(tickers), period=f"{days}d")
 
 def compute_metrics(df:pd.DataFrame)->pd.DataFrame:
-    cols=["Ticker","Date","Close","ATR14","MA20","MA50","gap20","gap50","trend_score"]
+    """
+    Renvoie 1 ligne par Ticker avec indicateurs + variations pct_1d / pct_7d / pct_30d
+    (ajouts nécessaires pour Synthèse Flash).
+    """
+    cols=["Ticker","Date","Close","ATR14","MA20","MA50","gap20","gap50","trend_score","pct_1d","pct_7d","pct_30d"]
     if df is None or df.empty: return pd.DataFrame(columns=cols)
     df=df.copy()
     if "Date" not in df.columns:
         df=df.reset_index().rename(columns={df.index.name or "index":"Date"})
     need={"Ticker","Date","High","Low","Close"}
     if need - set(df.columns): return pd.DataFrame(columns=cols)
+
+    # Normalisation & tri
+    df["Ticker"]=df["Ticker"].astype(str).str.upper()
     df=df.sort_values(["Ticker","Date"])
+
+    # Indicateurs
     df["PrevClose"]=df.groupby("Ticker")["Close"].shift(1)
     df["TR"]=np.maximum(df["High"]-df["Low"], np.maximum((df["High"]-df["PrevClose"]).abs(), (df["Low"]-df["PrevClose"]).abs()))
     df["ATR14"]=df.groupby("Ticker")["TR"].transform(lambda s:s.rolling(14,min_periods=5).mean())
     df["MA20"]=df.groupby("Ticker")["Close"].transform(lambda s:s.rolling(20,min_periods=5).mean())
     df["MA50"]=df.groupby("Ticker")["Close"].transform(lambda s:s.rolling(50,min_periods=10).mean())
-    last=df.groupby("Ticker").tail(1)[["Ticker","Date","Close","ATR14","MA20","MA50"]].copy()
+
+    # ✅ Variations (1 jour / 7 jours / 30 jours)
+    df["pct_1d"]=df.groupby("Ticker")["Close"].pct_change(1)
+    df["pct_7d"]=df.groupby("Ticker")["Close"].pct_change(7)
+    df["pct_30d"]=df.groupby("Ticker")["Close"].pct_change(30)
+
+    # Last row par Ticker
+    last=df.groupby("Ticker").tail(1)[["Ticker","Date","Close","ATR14","MA20","MA50","pct_1d","pct_7d","pct_30d"]].copy()
     last["gap20"]=last.apply(lambda r: (r["Close"]/r["MA20"]-1) if (not np.isnan(r["MA20"]) and r["MA20"]!=0) else np.nan, axis=1)
     last["gap50"]=last.apply(lambda r: (r["Close"]/r["MA50"]-1) if (not np.isnan(r["MA50"]) and r["MA50"]!=0) else np.nan, axis=1)
     last["trend_score"]=0.6*last["gap20"]+0.4*last["gap50"]
@@ -339,6 +354,10 @@ def dividends_summary(ticker:str):
         return [], None
 
 def fetch_all_markets(markets, days_hist=90):
+    """
+    Agrège CAC 40 et LS Exchange (watchlist).
+    Ajoute les variations pct_1d / pct_7d / pct_30d (cohérent Synthèse Flash).
+    """
     frames=[]
     for idx, source in markets:
         if idx=="CAC 40":
@@ -349,10 +368,28 @@ def fetch_all_markets(markets, days_hist=90):
             mem=pd.DataFrame({"ticker": tickers, "name": ls_list})
         else:
             continue
-        if mem.empty: continue
+
+        if mem.empty: 
+            continue
+
+        # 🔒 normalisation tickers pour jointures fiables
+        mem["ticker"]=mem["ticker"].astype(str).str.upper()
+
         px=fetch_prices(mem["ticker"].tolist(), days=days_hist)
-        if px.empty: continue
-        met=compute_metrics(px).merge(mem, left_on="Ticker", right_on="ticker", how="left")
+        if px.empty:
+            continue
+        px["Ticker"]=px["Ticker"].astype(str).str.upper()
+
+        met=compute_metrics(px)
+        if met.empty:
+            continue
+
+        # 🔐 force présence des variations (au cas où)
+        for c in ["pct_1d","pct_7d","pct_30d"]:
+            if c not in met.columns: met[c]=np.nan
+
+        met=met.merge(mem, left_on="Ticker", right_on="ticker", how="left")
         met["Indice"]=idx
         frames.append(met)
+
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
