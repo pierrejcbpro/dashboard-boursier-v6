@@ -128,6 +128,12 @@ else:
     if pd.notna(prox_mean):
         emoji = "🟢" if abs(prox_mean) <= 2 else ("⚠️" if abs(prox_mean) <= 5 else "🔴")
         st.markdown(f"**📏 Moyenne de proximité IA : {prox_mean:+.2f}% {emoji}**")
+        if abs(prox_mean) <= 2:
+            st.success("🟢 Marché global proche de zones d’achat idéales — momentum favorable.")
+        elif abs(prox_mean) <= 5:
+            st.warning("⚠️ Marché modérément éloigné des zones d’achat — à surveiller.")
+        else:
+            st.info("🔴 Marché éloigné des points d’entrée optimaux — patience recommandée.")
 
     # --- Style couleur fond selon la proximité
     def style_prox(v):
