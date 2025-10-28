@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-v6.6 — Mon Portefeuille (stable + synthèse améliorée)
-- Graphique unique (PEA / CTO / Total)
-- Synthèse écrite (€ + %)
-- Période sélectionnable (1j / 7j / 30j)
+v6.7 — Mon Portefeuille (analyse IA stable + graphique dynamique)
+- Analyse IA basée sur 120 jours d'historique (fixe)
+- Graphique dynamique selon période (1j / 7j / 30j)
+- Synthèse claire (€ + %)
 - Colonne Gain/Perte (€)
-- Conserve toutes les fonctions de la v6.4
+- Version stable dérivée de v6.6
 """
 
 import os, json, numpy as np, pandas as pd, altair as alt, streamlit as st
@@ -21,7 +21,7 @@ st.set_page_config(page_title="Mon Portefeuille", page_icon="💼", layout="wide
 st.title("💼 Mon Portefeuille — PEA & CTO")
 
 # --- Choix période d’analyse
-periode = st.sidebar.radio("Période d’analyse", ["1 jour", "7 jours", "30 jours"], index=0)
+periode = st.sidebar.radio("Période d’analyse (pour le graphique uniquement)", ["1 jour", "7 jours", "30 jours"], index=0)
 days_map = {"1 jour": 2, "7 jours": 10, "30 jours": 35}
 days_hist = days_map[periode]
 
@@ -153,10 +153,10 @@ with c2:
 if edited.empty:
     st.info("Ajoute une action pour commencer."); st.stop()
 
-# --- Analyse IA et gains
+# --- ⚙️ Analyse IA (basée sur 120 jours fixes)
 tickers = edited["Ticker"].dropna().unique().tolist()
-hist = fetch_prices(tickers, days=days_hist)
-met = compute_metrics(hist)
+hist_full = fetch_prices(tickers, days=120)
+met = compute_metrics(hist_full)
 merged = edited.merge(met, on="Ticker", how="left")
 
 profil = st.session_state.get("profil", "Neutre")
@@ -192,7 +192,7 @@ for _, r in merged.iterrows():
 out = pd.DataFrame(rows)
 st.dataframe(style_variations(out, ["Perf%"]), use_container_width=True, hide_index=True)
 
-# --- Synthèse & graphique unique
+# --- Synthèse & graphique (basé sur période choisie)
 def synthese_perf(df, t):
     df = df[df["Type"] == t]
     if df.empty: return 0, 0
@@ -215,16 +215,16 @@ st.markdown(f"""
 **Total** : {tot_gain:+.2f} € ({tot_pct:+.2f}%)
 """)
 
-# --- Graphique
+# --- Graphique dynamique
 st.subheader(f"📈 Variation du portefeuille — {periode}")
-hist = fetch_prices(tickers, days=days_hist)
-if hist.empty or "Date" not in hist.columns:
+hist_graph = fetch_prices(tickers, days=days_hist)
+if hist_graph.empty or "Date" not in hist_graph.columns:
     st.caption("Pas assez d'historique.")
 else:
     df = []
     for _, r in edited.iterrows():
         t, q, pru, tp = r["Ticker"], r["Qty"], r["PRU"], r["Type"]
-        d = hist[hist["Ticker"] == t].copy()
+        d = hist_graph[hist_graph["Ticker"] == t].copy()
         if d.empty: continue
         d["Valeur"] = d["Close"] * q
         d["Type"] = tp
