@@ -14,10 +14,8 @@ from datetime import datetime
 from lib import (
     fetch_prices, compute_metrics, price_levels_from_row, decision_label_from_row,
     company_name_from_ticker, get_profile_params, resolve_identifier,
-    find_ticker_by_name, maybe_guess_yahoo
+    find_ticker_by_name, maybe_guess_yahoo, load_profile   # 👈 profil cohérent
 )
-
-
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Recherche universelle", page_icon="🔍", layout="wide")
@@ -155,11 +153,14 @@ st.markdown(f"**Variations** — 1j: {pretty_pct(v1d)} · 7j: {pretty_pct(v7d)} 
 
 st.divider()
 
-profil = st.session_state.get("profil", "Neutre")
-entry, target, stop = price_levels_from_row(row, profil).values()
+# 👇 Profil IA cohérent avec lib/load_profile
+profil = load_profile()
+levels = price_levels_from_row(row, profil)
+entry, target, stop = levels["entry"], levels["target"], levels["stop"]
 decision = decision_label_from_row(row, held=False, vol_max=get_profile_params(profil)["vol_max"])
 
 cA, cB = st.columns([1.2, 2])
+
 with cA:
     st.subheader("🧠 Synthèse IA")
     vol = (abs(row["MA20"] - row["MA50"]) / row["MA50"] * 100) if (pd.notna(row["MA20"]) and pd.notna(row["MA50"]) and row["MA50"] != 0) else np.nan
@@ -168,22 +169,21 @@ with cA:
         f"- **Entrée** ≈ **{entry:.2f}** · **Objectif** ≈ **{target:.2f}** · **Stop** ≈ **{stop:.2f}**\n"
         f"- **Volatilité** : {'faible' if vol < 2 else 'modérée' if vol < 5 else 'élevée'} ({vol:.2f}%)"
     )
-    # --- Proximité entrée ---
-prox = ((row["Close"] / entry) - 1) * 100 if entry and entry > 0 else np.nan
-if np.isfinite(prox):
-    emoji = "🟢" if abs(prox) <= 2 else ("⚠️" if abs(prox) <= 5 else "🔴")
-    st.markdown(f"- **Proximité de l’entrée** : {prox:+.2f}% {emoji}")
-    if abs(prox) <= 2:
-        st.success("🟢 Cette valeur est proche du point d’entrée idéal (zone d’achat potentielle).")
-    elif abs(prox) <= 5:
-        st.warning("⚠️ Cours modérément éloigné de l’entrée idéale.")
+
+    # --- Proximité entrée + emoji (dans la même colonne)
+    prox = ((row["Close"] / entry) - 1) * 100 if entry and entry > 0 else np.nan
+    if np.isfinite(prox):
+        emoji = "🟢" if abs(prox) <= 2 else ("⚠️" if abs(prox) <= 5 else "🔴")
+        st.markdown(f"- **Proximité de l’entrée** : {prox:+.2f}% {emoji}")
+        if abs(prox) <= 2:
+            st.success("🟢 Cette valeur est proche du point d’entrée idéal (zone d’achat potentielle).")
+        elif abs(prox) <= 5:
+            st.warning("⚠️ Cours modérément éloigné de l’entrée idéale.")
+        else:
+            st.info("🔴 Cours éloigné du point d’entrée — attendre un repli.")
     else:
-        st.info("🔴 Cours éloigné du point d’entrée — attendre un repli.")
-else:
-    st.caption("Proximité non calculable.")
+        st.caption("Proximité non calculable.")
 
-
-    # --- Nouveau bouton pour ajouter au portefeuille ---
     st.divider()
     st.markdown("### ➕ Ajouter cette valeur au portefeuille")
     type_port = st.selectbox("Type de compte", ["PEA", "CTO"])
@@ -217,7 +217,9 @@ with cB:
         ).properties(height=380)
         lv = pd.DataFrame({"y":[entry, target, stop],
                            "label":["Entrée ~","Objectif ~","Stop ~"]})
-        rules = alt.Chart(lv).mark_rule(strokeDash=[6,4]).encode(y="y:Q", color=alt.value("#888"), tooltip=["label:N","y:Q"])
+        rules = alt.Chart(lv).mark_rule(strokeDash=[6,4]).encode(
+            y="y:Q", color=alt.value("#888"), tooltip=["label:N","y:Q"]
+        )
         st.altair_chart(base + rules, use_container_width=True)
 
 st.divider()
