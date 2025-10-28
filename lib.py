@@ -482,13 +482,15 @@ def fetch_all_markets(markets, days_hist=120):
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
 
 # =========================
-# SÉLECTION IA OPTIMALE (TOP 10)
+# SÉLECTION IA OPTIMALE (TOP 10) — Potentiel € + Proximité %
 # =========================
 def select_top_actions(df, profile="Neutre", n=10):
     """
     Retourne les meilleures actions (≤ n) selon IA :
     - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close), décision IA
-    - calcule aussi l’écart Objectif–Entrée (%)
+    - Potentiel en **euros** (Objectif - Entrée)
+    - Proximité **en %** entre cours et entrée
+    - Indicateur booléen 'Près de l’entrée'
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -497,8 +499,9 @@ def select_top_actions(df, profile="Neutre", n=10):
     vol_max = p["vol_max"]
 
     data = df.copy()
-    for c in ["trend_score","pct_7d","pct_30d","ATR14","Close"]:
-        if c not in data.columns: data[c] = np.nan
+    for c in ["trend_score","pct_7d","pct_30d","ATR14","Close","MA20","MA50"]:
+        if c not in data.columns:
+            data[c] = np.nan
 
     data = data.dropna(subset=["Close"])
     data["Volatilité"] = data["ATR14"] / data["Close"]
@@ -515,16 +518,24 @@ def select_top_actions(df, profile="Neutre", n=10):
     filt = (data["Décision_IA"].str.contains("🟢", na=False)) & (data["Volatilité"] <= vol_max * 1.5)
     data = data[filt].sort_values("IA_Score", ascending=False)
 
+    # Niveaux + métriques d'opportunité
     def _levels(r):
         lev = price_levels_from_row(r, profile)
-        ecart = None
-        if lev["entry"] and lev["target"] and lev["entry"] > 0:
-            ecart = (lev["target"]/lev["entry"] - 1) * 100
+        entry = lev["entry"]
+        target = lev["target"]
+        stop = lev["stop"]
+        potentiel_eur = None
+        prox_pct = None
+        if (entry is not None) and (target is not None) and (entry > 0):
+            potentiel_eur = target - entry
+        if (entry is not None) and (entry > 0) and (r.get("Close") is not None):
+            prox_pct = ((r["Close"] / entry) - 1) * 100
         return pd.Series({
-            "Entrée (€)": lev["entry"],
-            "Objectif (€)": lev["target"],
-            "Stop (€)": lev["stop"],
-            "Potentiel (%)": ecart
+            "Entrée (€)": entry,
+            "Objectif (€)": target,
+            "Stop (€)": stop,
+            "Potentiel (€)": potentiel_eur,
+            "Proximité (%)": prox_pct
         })
 
     levs = data.apply(_levels, axis=1)
@@ -532,7 +543,7 @@ def select_top_actions(df, profile="Neutre", n=10):
 
     keep = ["Ticker","name","Close","MA20","MA50","trend_score","pct_7d","pct_30d",
             "Volatilité","IA_Score","Décision_IA",
-            "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (%)"]
+            "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (€)","Proximité (%)"]
     for k in keep:
         if k not in top.columns:
             top[k] = np.nan
@@ -544,11 +555,19 @@ def select_top_actions(df, profile="Neutre", n=10):
         "Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
     }, inplace=True)
 
-    # Mise en forme %
+    # Mise en forme
     top["Perf 7j (%)"]   = (top["Perf 7j (%)"]*100).round(2)
     top["Perf 30j (%)"]  = (top["Perf 30j (%)"]*100).round(2)
     top["Risque"]        = (top["Risque"]*100).round(2)
     top["Score IA"]      = top["Score IA"].round(2)
     top["Cours (€)"]     = top["Cours (€)"].round(2)
-    top["Potentiel (%)"] = top["Potentiel (%)"].round(1)
+    top["Potentiel (€)"] = top["Potentiel (€)"].round(2)
+    top["Proximité (%)"] = top["Proximité (%)"].round(2)
+
+    # Indicateur "Près de l’entrée"
+    def is_near_entry(r):
+        p = r.get("Proximité (%)")
+        return np.isfinite(p) and abs(p) <= 2.0
+    top["Près de l’entrée"] = top.apply(is_near_entry, axis=1)
+
     return top.reset_index(drop=True)
