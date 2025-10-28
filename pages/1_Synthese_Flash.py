@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-import streamlit as st, pandas as pd, numpy as np, altair as alt
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from lib import (
     fetch_all_markets, style_variations, load_profile, save_profile,
     news_summary, select_top_actions
