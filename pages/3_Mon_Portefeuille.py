@@ -317,7 +317,6 @@ else:
 
     if perf_rows:
         P = pd.concat(perf_rows, ignore_index=True)
-        # Agrégations pondérées par date & type
         def wavg(g):
             w = g["Poids"].replace(0, np.nan)
             if w.isna().all():
@@ -359,3 +358,4 @@ else:
 
     if not charts_drawn:
         st.caption("Graphes indisponibles : données insuffisantes sur 90 jours.")
+
