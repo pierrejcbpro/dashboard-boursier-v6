@@ -233,13 +233,9 @@ def color_proximity(v):
     return "background-color:#ffebee; color:#b71c1c"  # rouge
 
 def highlight_near_entry(row):
-    """Met en surbrillance les lignes proches du point d’entrée (≤2%)."""
-    dark_mode = "#0e1117" in st.get_option("theme.base") or "dark" in st.get_option("theme.base")
-    bg_color = "rgba(0,255,200,0.15)" if dark_mode else "#fff9c4"
     if pd.notna(row["Proximité (%)"]) and abs(row["Proximité (%)"]) <= 2:
-        return [f"background-color: {bg_color}; font-weight:600"] * len(row)
+        return ["background-color: #fff9c4; font-weight:600"] * len(row)
     return [""] * len(row)
-
 
 
 # 💡 Couleurs IA
