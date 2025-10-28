@@ -225,20 +225,7 @@ def proximity_info(row):
 
 out[["Proximité (%)", "Signal Entrée"]] = out.apply(lambda r: proximity_info(r), axis=1, result_type="expand")
 
-# --- Mise en forme style ---
-def color_proximity(v):
-    if pd.isna(v): return ""
-    if abs(v) <= 2: return "background-color:#e6f4ea; color:#0b8043"  # vert
-    if abs(v) <= 5: return "background-color:#fff8e1; color:#a67c00"  # jaune
-    return "background-color:#ffebee; color:#b71c1c"  # rouge
-
-def highlight_near_entry(row):
-    """Met en surbrillance les lignes proches du point d’entrée (≤2%)."""
-    dark_mode = "#0e1117" in st.get_option("theme.base") or "dark" in st.get_option("theme.base")
-    bg_color = "rgba(0,255,200,0.15)" if dark_mode else "#fff9c4"
-    if pd.notna(row["Proximité (%)"]) and abs(row["Proximité (%)"]) <= 2:
-        return [f"background-color: {bg_color}; font-weight:600"] * len(row)
-    return [""] * len(row)
+from lib import highlight_near_entry_adaptive, color_proximity_adaptive
 
 
 
