@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-v7.0 — Détails Indice
+v7.1 — Détails Indice
 Analyse IA complète d’un indice boursier :
 - Sélection dynamique (CAC40, DAX, NASDAQ100, S&P500)
-- Classement IA des actions (Acheter / Surveiller / Vendre)
-- Calcul global de volatilité moyenne et dispersion
-- Graphiques interactifs (perf + barres IA)
+- Classement IA (Acheter / Surveiller / Vendre)
+- Volatilité et dispersion globale
+- Graphiques interactifs
+- Synthèse IA lisible
 """
 
 import streamlit as st, pandas as pd, numpy as np, altair as alt
 from lib import (
-    fetch_all_markets, compute_metrics, price_levels_from_row, decision_label_from_row,
+    fetch_all_markets, price_levels_from_row, decision_label_from_row,
     style_variations, get_profile_params, load_profile
 )
 
@@ -39,14 +40,7 @@ if data.empty:
     st.warning("Aucune donnée disponible (vérifie la connectivité).")
     st.stop()
 
-# Calcul métriques IA
-met = compute_metrics(data)
-if met.empty:
-    st.warning("Impossible de calculer les métriques IA.")
-    st.stop()
-
-# Fusion avec les infos de variation
-merged = data.merge(met, on="Ticker", how="left")
+merged = data.copy()
 
 # ---------------- ANALYSE GLOBALE ----------------
 avg = merged[value_col].mean() * 100
@@ -76,8 +70,8 @@ for _, r in merged.iterrows():
     rows.append({
         "Société": r.get("name", ""),
         "Ticker": r["Ticker"],
-        "Cours (€)": round(px, 2),
-        "Variation (%)": round(r[value_col] * 100, 2),
+        "Cours (€)": round(px, 2) if np.isfinite(px) else None,
+        "Variation (%)": round(r[value_col] * 100, 2) if np.isfinite(r[value_col]) else None,
         "Entrée (€)": entry,
         "Objectif (€)": target,
         "Stop (€)": stop,
@@ -91,7 +85,7 @@ if out.empty:
     st.info("Aucune donnée exploitable pour cet indice.")
     st.stop()
 
-# Tri : d’abord Acheter > Surveiller > Vendre, puis par proximité
+# Tri : Acheter > Surveiller > Vendre, puis par proximité
 def sort_key(val):
     if "Acheter" in val: return 0
     if "Surveiller" in val: return 1
