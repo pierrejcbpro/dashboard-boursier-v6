@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-v6.9.2 — Recherche universelle
+v7.0 — Recherche universelle
 - Recherche intégrée (Nom / Ticker LS / ISIN / WKN / Yahoo)
 - Mémoire de la dernière recherche
 - Analyse IA complète (MA20/MA50/ATR, Entrée / Objectif / Stop, Décision IA)
-- Graphique avec lignes de niveaux (Jour / 7j / 30j / 1 an / 5 ans)
-- Actualités ciblées (liens cliquables + résumé court + date)
+- Graphique avec lignes de niveaux
+- Actualités ciblées (liens + dates + résumé IA)
+- ➕ Bouton "Ajouter au portefeuille" (sauvegarde directe dans portfolio.json)
 """
 
-import streamlit as st, pandas as pd, numpy as np, altair as alt, requests, html, re
+import streamlit as st, pandas as pd, numpy as np, altair as alt, requests, html, re, os, json
 from datetime import datetime
 from lib import (
     fetch_prices, compute_metrics, price_levels_from_row, decision_label_from_row,
@@ -19,6 +20,13 @@ from lib import (
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Recherche universelle", page_icon="🔍", layout="wide")
 st.title("🔍 Recherche universelle — Analyse IA complète")
+
+DATA_PATH = "data/portfolio.json"
+os.makedirs("data", exist_ok=True)
+if not os.path.exists(DATA_PATH):
+    pd.DataFrame(columns=["Ticker", "Type", "Qty", "PRU", "Name"]).to_json(
+        DATA_PATH, orient="records", indent=2, force_ascii=False
+    )
 
 # ---------------- HELPERS ----------------
 def remember_last_search(symbol=None, query=None, period=None):
@@ -83,7 +91,7 @@ def short_news_summary(titles):
 def pretty_pct(x):
     return f"{x*100:+.2f}%" if pd.notna(x) else "—"
 
-# ---------------- RECHERCHE PRINCIPALE ----------------
+# ---------------- RECHERCHE ----------------
 last_symbol, last_query, last_period = get_last_search()
 
 with st.expander("🔎 Recherche d’une valeur", expanded=True):
@@ -158,6 +166,27 @@ with cA:
         f"- **Entrée** ≈ **{entry:.2f}** · **Objectif** ≈ **{target:.2f}** · **Stop** ≈ **{stop:.2f}**\n"
         f"- **Volatilité** : {'faible' if vol < 2 else 'modérée' if vol < 5 else 'élevée'} ({vol:.2f}%)"
     )
+
+    # --- Nouveau bouton pour ajouter au portefeuille ---
+    st.divider()
+    st.markdown("### ➕ Ajouter cette valeur au portefeuille")
+    type_port = st.selectbox("Type de compte", ["PEA", "CTO"])
+    qty = st.number_input("Quantité", min_value=0.0, step=1.0)
+    pru = st.number_input("Prix d’achat estimé (PRU €)", min_value=0.0, step=0.01, value=float(row["Close"]))
+    if st.button("💼 Ajouter au portefeuille"):
+        try:
+            pf = pd.read_json(DATA_PATH)
+            pf = pd.concat([pf, pd.DataFrame([{
+                "Ticker": symbol.upper(),
+                "Type": type_port,
+                "Qty": qty,
+                "PRU": pru,
+                "Name": name
+            }])], ignore_index=True)
+            pf.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
+            st.success(f"✅ {name} ({symbol}) ajouté au portefeuille {type_port}.")
+        except Exception as e:
+            st.error(f"Erreur lors de l’ajout : {e}")
 
 with cB:
     st.subheader(f"📈 Graphique — {period}")
