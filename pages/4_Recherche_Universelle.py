@@ -17,6 +17,15 @@ from lib import (
     find_ticker_by_name, maybe_guess_yahoo
 )
 
+if np.isfinite(prox):
+    emoji = "🟢" if abs(prox) <= 2 else ("⚠️" if abs(prox) <= 5 else "🔴")
+    st.markdown(
+        f"- **Proximité de l’entrée** : "
+        f"<span style='{color_proximity_adaptive(prox)}'>{prox:+.2f}% {emoji}</span>",
+        unsafe_allow_html=True
+    )
+
+
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Recherche universelle", page_icon="🔍", layout="wide")
 st.title("🔍 Recherche universelle — Analyse IA complète")
