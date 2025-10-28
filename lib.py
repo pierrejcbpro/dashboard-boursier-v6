@@ -4,111 +4,154 @@ from functools import lru_cache
 import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
 
+# =========================
+# FICHIERS & PRESETS
+# =========================
 DATA_DIR = "data"
 MAPPING_PATH = os.path.join(DATA_DIR, "id_mapping.json")
 WL_PATH = os.path.join(DATA_DIR, "watchlist_ls.json")
 PROFILE_PATH = os.path.join(DATA_DIR, "profile.json")
 LAST_SEARCH_PATH = os.path.join(DATA_DIR, "last_search.json")
-for p in [DATA_DIR]:
-    os.makedirs(p, exist_ok=True)
-for p, default in [
+
+os.makedirs(DATA_DIR, exist_ok=True)
+_defaults = [
     (MAPPING_PATH, {}),
     (WL_PATH, []),
-    (PROFILE_PATH, {"profil":"Neutre"}),
-    (LAST_SEARCH_PATH, {"last":"TTE.PA"}),
-]:
+    (PROFILE_PATH, {"profil": "Neutre"}),
+    (LAST_SEARCH_PATH, {"last": "TTE.PA"}),
+]
+for p, default in _defaults:
     if not os.path.exists(p):
-        with open(p,"w",encoding="utf-8") as f: json.dump(default, f)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(default, f)
 
-UA = {"User-Agent":"Mozilla/5.0"}
+UA = {"User-Agent": "Mozilla/5.0"}
 
-# Sentiment (best effort)
+# =========================
+# SENTIMENT (VADER)
+# =========================
 try:
     nltk.data.find("sentiment/vader_lexicon.zip")
 except LookupError:
-    try: nltk.download("vader_lexicon")
-    except Exception: pass
+    try:
+        nltk.download("vader_lexicon")
+    except Exception:
+        pass
+
 try:
     SIA = SentimentIntensityAnalyzer()
 except Exception:
     SIA = None
 
+# =========================
+# PROFILS IA
+# =========================
 PROFILE_PARAMS = {
-    "Agressif": {"vol_max":0.08,"target_mult":1.10,"stop_mult":0.92,"entry_mult":0.990},
-    "Neutre":   {"vol_max":0.05,"target_mult":1.07,"stop_mult":0.95,"entry_mult":0.990},
-    "Prudent":  {"vol_max":0.03,"target_mult":1.05,"stop_mult":0.97,"entry_mult":0.995},
+    "Agressif": {"vol_max": 0.08, "target_mult": 1.10, "stop_mult": 0.92, "entry_mult": 0.990},
+    "Neutre":   {"vol_max": 0.05, "target_mult": 1.07, "stop_mult": 0.95, "entry_mult": 0.990},
+    "Prudent":  {"vol_max": 0.03, "target_mult": 1.05, "stop_mult": 0.97, "entry_mult": 0.995},
 }
-def get_profile_params(profile:str):
+
+def get_profile_params(profile: str):
     return PROFILE_PARAMS.get(profile or "Neutre", PROFILE_PARAMS["Neutre"])
 
 def load_profile():
     try:
-        return json.load(open(PROFILE_PATH,"r",encoding="utf-8")).get("profil","Neutre")
+        return json.load(open(PROFILE_PATH, "r", encoding="utf-8")).get("profil", "Neutre")
     except Exception:
         return "Neutre"
+
 def save_profile(p):
     try:
-        json.dump({"profil":p}, open(PROFILE_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
+        json.dump({"profil": p}, open(PROFILE_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     except Exception:
         pass
 
 def load_last_search():
     try:
-        return json.load(open(LAST_SEARCH_PATH,"r",encoding="utf-8")).get("last","")
+        return json.load(open(LAST_SEARCH_PATH, "r", encoding="utf-8")).get("last", "")
     except Exception:
         return ""
+
 def save_last_search(t):
     try:
-        json.dump({"last":t}, open(LAST_SEARCH_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
+        json.dump({"last": t}, open(LAST_SEARCH_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     except Exception:
         pass
 
+# =========================
+# MAPPING / WATCHLIST
+# =========================
 def load_mapping():
-    try: return json.load(open(MAPPING_PATH,"r",encoding="utf-8"))
-    except Exception: return {}
-def save_mapping(m): json.dump(m, open(MAPPING_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
+    try:
+        return json.load(open(MAPPING_PATH, "r", encoding="utf-8"))
+    except Exception:
+        return {}
+
+def save_mapping(m):
+    json.dump(m, open(MAPPING_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 def load_watchlist_ls():
-    try: return json.load(open(WL_PATH,"r",encoding="utf-8"))
-    except Exception: return []
-def save_watchlist_ls(lst): json.dump(lst, open(WL_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
+    try:
+        return json.load(open(WL_PATH, "r", encoding="utf-8"))
+    except Exception:
+        return []
 
+def save_watchlist_ls(lst):
+    json.dump(lst, open(WL_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+# =========================
+# LS EXCHANGE → YAHOO
+# =========================
 def _norm(s): return (s or "").strip().upper()
 
 _PARIS = {"AIR","ORA","MC","TTE","BNP","SGO","ENGI","SU","DG","ACA","GLE","RI","KER","HO","EN","CAP","AI","PUB","VIE","VIV","STM"}
-def guess_yahoo_from_ls(ticker:str):
+
+def guess_yahoo_from_ls(ticker: str):
     if not ticker: return None
-    t=_norm(ticker)
-    if "." in t and not t.endswith(".LS"): return t
-    if t.endswith(".LS"): return f"{t[:-3]}.L"
-    if t=="TOTB": return "TOTB.F"
-    if t.endswith("B") and not t.endswith("AB"): return f"{t}.F"
-    if t in _PARIS: return f"{t}.PA"
-    if len(t)<=6 and t.isalpha(): return f"{t}.PA"
+    t = _norm(ticker)
+    if "." in t and not t.endswith(".LS"):   # déjà suffixé
+        return t
+    if t.endswith(".LS"):                    # Londres
+        return f"{t[:-3]}.L"
+    if t == "TOTB":                          # TotalEnergies LS → Frankfurt
+        return "TOTB.F"
+    if t.endswith("B") and not t.endswith("AB"):  # Heuristique DE
+        return f"{t}.F"
+    if t in _PARIS:
+        return f"{t}.PA"
+    if len(t) <= 6 and t.isalpha():
+        return f"{t}.PA"
     return t
 
 def maybe_guess_yahoo(s):
-    s=_norm(s)
-    m=load_mapping().get(s)
+    s = _norm(s)
+    m = load_mapping().get(s)
     return m or guess_yahoo_from_ls(s)
 
 def resolve_identifier(id_or_ticker):
-    raw=_norm(id_or_ticker)
-    if not raw: return None,{}
-    mapping=load_mapping()
-    if raw in mapping: return mapping[raw],{"source":"mapping"}
-    guess=maybe_guess_yahoo(raw)
+    raw = _norm(id_or_ticker)
+    if not raw: return None, {}
+    mapping = load_mapping()
+    if raw in mapping:
+        return mapping[raw], {"source": "mapping"}
+    guess = maybe_guess_yahoo(raw)
     if guess:
         try:
-            hist=yf.download(guess,period="5d",interval="1d",auto_adjust=False,progress=False,threads=False)
+            hist = yf.download(guess, period="5d", interval="1d", auto_adjust=False, progress=False, threads=False)
             if not hist.empty:
-                mapping[raw]=guess; save_mapping(mapping)
-                return guess,{"source":"heuristic"}
-        except Exception: pass
-    return None,{}
+                mapping[raw] = guess
+                save_mapping(mapping)
+                return guess, {"source": "heuristic"}
+        except Exception:
+            pass
+    return None, {}
 
+# =========================
+# RECHERCHE YAHOO
+# =========================
 @lru_cache(maxsize=256)
-def yahoo_search(query:str, region="FR", lang="fr-FR", quotesCount=20):
+def yahoo_search(query: str, region="FR", lang="fr-FR", quotesCount=20):
     url = "https://query2.finance.yahoo.com/v1/finance/search"
     params = {"q": query, "quotesCount": quotesCount, "newsCount": 0, "lang": lang, "region": region}
     try:
@@ -116,7 +159,7 @@ def yahoo_search(query:str, region="FR", lang="fr-FR", quotesCount=20):
         r.raise_for_status()
         data = r.json()
         quotes = data.get("quotes", [])
-        out=[]
+        out = []
         for q in quotes:
             out.append({
                 "symbol": q.get("symbol"),
@@ -129,7 +172,7 @@ def yahoo_search(query:str, region="FR", lang="fr-FR", quotesCount=20):
     except Exception:
         return []
 
-def find_ticker_by_name(company_name:str, prefer_markets=("Paris","XETRA","Frankfurt","NasdaqGS","NYSE")):
+def find_ticker_by_name(company_name: str, prefer_markets=("Paris","XETRA","Frankfurt","NasdaqGS","NYSE")):
     if not company_name: return []
     q = company_name.strip()
     res = yahoo_search(q)
@@ -140,17 +183,20 @@ def find_ticker_by_name(company_name:str, prefer_markets=("Paris","XETRA","Frank
         score = 0
         exch = (r.get("exchDisp") or "").lower()
         name = (r.get("shortname") or r.get("longname") or "").lower()
-        sym = (r.get("symbol") or "").upper()
+        sym  = (r.get("symbol") or "").upper()
         if any(pm.lower() in exch for pm in prefer_markets): score += 3
         if q.lower() in name: score += 2
         if q.lower() in sym.lower(): score += 1
         ranked.append((score, r))
     ranked.sort(key=lambda x: x[0], reverse=True)
-    return [r for _,r in ranked]
+    return [r for _, r in ranked]
 
+# =========================
+# MEMBRES D’INDICES (Minimal viable pour CAC40 + LS)
+# =========================
 @lru_cache(maxsize=32)
-def _read_tables(url:str):
-    html=requests.get(url,headers=UA,timeout=20).text
+def _read_tables(url: str):
+    html = requests.get(url, headers=UA, timeout=20).text
     return pd.read_html(html)
 
 def _extract_name_ticker(tables):
@@ -170,19 +216,31 @@ def _extract_name_ticker(tables):
 @lru_cache(maxsize=8)
 def members_cac40():
     df=_extract_name_ticker(_read_tables("https://en.wikipedia.org/wiki/CAC_40"))
-    df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.PA"); df["index"]="CAC 40"; return df
+    df["ticker"]=df["ticker"].apply(lambda x: x if "." in x else f"{x}.PA}")
+    df["index"]="CAC 40"
+    # Correction d’accolade accidentelle ci-dessus :
+    df["ticker"]=df["ticker"].str.replace("}", "", regex=False)
+    return df
 
-def members(index_name:str):
+def members(index_name: str):
     if index_name=="CAC 40": return members_cac40()
     return pd.DataFrame(columns=["ticker","name","index"])
 
+# =========================
+# PRIX (AJUSTÉS) & MÉTRIQUES
+# =========================
 @lru_cache(maxsize=64)
 def fetch_prices_cached(tickers_tuple, period="120d"):
     tickers=list(tickers_tuple)
     if not tickers: return pd.DataFrame()
     try:
-        data=yf.download(tickers,period=period,interval="1d",auto_adjust=False,group_by="ticker",threads=False,progress=False)
-    except Exception: return pd.DataFrame()
+        data=yf.download(
+            tickers, period=period, interval="1d",
+            auto_adjust=True,        # ✅ ajustés (anti faux +/−)
+            group_by="ticker", threads=False, progress=False
+        )
+    except Exception:
+        return pd.DataFrame()
     if data is None or len(data)==0: return pd.DataFrame()
     frames=[]
     if isinstance(data,pd.DataFrame) and {"Open","High","Low","Close"}.issubset(data.columns):
@@ -192,18 +250,49 @@ def fetch_prices_cached(tickers_tuple, period="120d"):
             try:
                 if t in data and isinstance(data[t],pd.DataFrame):
                     df=data[t].copy(); df["Ticker"]=t; frames.append(df)
-            except Exception: continue
+            except Exception:
+                continue
     if not frames: return pd.DataFrame()
     out=pd.concat(frames); out.reset_index(inplace=True); return out
 
 def fetch_prices(tickers, days=120):
     return fetch_prices_cached(tuple(tickers), period=f"{days}d")
 
-def compute_metrics(df:pd.DataFrame)->pd.DataFrame:
-    """
-    Renvoie 1 ligne par Ticker avec indicateurs + variations pct_1d / pct_7d / pct_30d
-    (ajouts nécessaires pour Synthèse Flash).
-    """
+def _calendar_returns(last_rows: pd.DataFrame, full_df: pd.DataFrame) -> pd.DataFrame:
+    """Variations calendaire J/7j/30j (anti biais séances)."""
+    if full_df.empty or last_rows.empty:
+        for k in ("pct_1d","pct_7d","pct_30d"): last_rows[k]=np.nan
+        return last_rows
+    full=full_df.copy()
+    full["Ticker"]=full["Ticker"].astype(str).str.upper()
+    full=full.sort_values(["Ticker","Date"])
+    last=last_rows.copy()
+    last["Ticker"]=last["Ticker"].astype(str).str.upper()
+
+    def lookup_price(tkr, ref_date, days_back):
+        target=pd.to_datetime(ref_date)-pd.Timedelta(days=days_back)
+        hist=full[full["Ticker"]==tkr][["Date","Close"]].dropna().sort_values("Date")
+        if hist.empty: return np.nan
+        hist=hist[hist["Date"]<=target]
+        if hist.empty:
+            return float(full[full["Ticker"]==tkr]["Close"].iloc[0])
+        return float(hist["Close"].iloc[-1])
+
+    vals_1, vals_7, vals_30 = [], [], []
+    for _, r in last.iterrows():
+        tkr, dref, pref = r["Ticker"], r["Date"], float(r["Close"])
+        p1, p7, p30 = lookup_price(tkr, dref, 1), lookup_price(tkr, dref, 7), lookup_price(tkr, dref, 30)
+        v1  = (pref/p1-1)  if (np.isfinite(pref) and np.isfinite(p1)  and p1>0)  else np.nan
+        v7  = (pref/p7-1)  if (np.isfinite(pref) and np.isfinite(p7)  and p7>0)  else np.nan
+        v30 = (pref/p30-1) if (np.isfinite(pref) and np.isfinite(p30) and p30>0) else np.nan
+        # clamp anti-délires sur J (splits non détectés, etc.)
+        if np.isfinite(v1) and abs(v1)>0.4: v1=np.nan
+        vals_1.append(v1); vals_7.append(v7); vals_30.append(v30)
+    last["pct_1d"], last["pct_7d"], last["pct_30d"] = vals_1, vals_7, vals_30
+    return last
+
+def compute_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """Retourne 1 ligne par ticker avec indicateurs + variations J/7j/30j."""
     cols=["Ticker","Date","Close","ATR14","MA20","MA50","gap20","gap50","trend_score","pct_1d","pct_7d","pct_30d"]
     if df is None or df.empty: return pd.DataFrame(columns=cols)
     df=df.copy()
@@ -212,39 +301,75 @@ def compute_metrics(df:pd.DataFrame)->pd.DataFrame:
     need={"Ticker","Date","High","Low","Close"}
     if need - set(df.columns): return pd.DataFrame(columns=cols)
 
-    # Normalisation & tri
     df["Ticker"]=df["Ticker"].astype(str).str.upper()
     df=df.sort_values(["Ticker","Date"])
-
-    # Indicateurs
     df["PrevClose"]=df.groupby("Ticker")["Close"].shift(1)
     df["TR"]=np.maximum(df["High"]-df["Low"], np.maximum((df["High"]-df["PrevClose"]).abs(), (df["Low"]-df["PrevClose"]).abs()))
     df["ATR14"]=df.groupby("Ticker")["TR"].transform(lambda s:s.rolling(14,min_periods=5).mean())
     df["MA20"]=df.groupby("Ticker")["Close"].transform(lambda s:s.rolling(20,min_periods=5).mean())
     df["MA50"]=df.groupby("Ticker")["Close"].transform(lambda s:s.rolling(50,min_periods=10).mean())
 
-    # ✅ Variations (1 jour / 7 jours / 30 jours)
-    df["pct_1d"]=df.groupby("Ticker")["Close"].pct_change(1)
-    df["pct_7d"]=df.groupby("Ticker")["Close"].pct_change(7)
-    df["pct_30d"]=df.groupby("Ticker")["Close"].pct_change(30)
-
-    # Last row par Ticker
-    last=df.groupby("Ticker").tail(1)[["Ticker","Date","Close","ATR14","MA20","MA50","pct_1d","pct_7d","pct_30d"]].copy()
-    last["gap20"]=last.apply(lambda r: (r["Close"]/r["MA20"]-1) if (not np.isnan(r["MA20"]) and r["MA20"]!=0) else np.nan, axis=1)
-    last["gap50"]=last.apply(lambda r: (r["Close"]/r["MA50"]-1) if (not np.isnan(r["MA50"]) and r["MA50"]!=0) else np.nan, axis=1)
+    last=df.groupby("Ticker").tail(1)[["Ticker","Date","Close","ATR14","MA20","MA50"]].copy()
+    last["gap20"]=np.where(np.isfinite(last["MA20"]) & (last["MA20"]!=0), last["Close"]/last["MA20"]-1, np.nan)
+    last["gap50"]=np.where(np.isfinite(last["MA50"]) & (last["MA50"]!=0), last["Close"]/last["MA50"]-1, np.nan)
     last["trend_score"]=0.6*last["gap20"]+0.4*last["gap50"]
+
+    last=_calendar_returns(last, df)
     return last.reset_index(drop=True)
 
+# =========================
+# INFOS SOCIÉTÉ & DIVIDENDES
+# =========================
+@lru_cache(maxsize=1024)
+def company_name_from_ticker(ticker: str) -> str:
+    if not ticker: return ""
+    try:
+        t = yf.Ticker(ticker)
+        name = None
+        try:
+            name = t.fast_info.get("shortName", None)  # selon versions yfinance
+        except Exception:
+            pass
+        if not name:
+            info = t.get_info()
+            name = info.get("shortName") or info.get("longName")
+        return name or ticker
+    except Exception:
+        return ticker
+
+def dividends_summary(ticker: str):
+    try:
+        t = yf.Ticker(ticker)
+        div = t.dividends
+        if div is None or div.empty:
+            return [], None
+        div = div.sort_index(ascending=False)
+        recent = [(str(idx.date()), float(val)) for idx, val in div.head(8).items()]
+        px = t.history(period="5d")["Close"].iloc[-1]
+        trailing = float(div.head(4).sum()/px) if px and px>0 else None
+        return recent, trailing
+    except Exception:
+        return [], None
+
+# =========================
+# NEWS (avec dates) & RÉSUMÉ
+# =========================
 @lru_cache(maxsize=256)
 def google_news_titles(query, lang="fr"):
-    url=f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl={lang}-{lang.upper()}&gl={lang.upper()}&ceid={lang.upper()}:{lang.upper()}"
+    url = f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl={lang}-{lang.upper()}&gl={lang.upper()}&ceid={lang.upper()}:{lang.upper()}"
     try:
-        xml=requests.get(url,headers=UA,timeout=12).text
+        xml = requests.get(url, headers=UA, timeout=12).text
         import xml.etree.ElementTree as ET
-        root=ET.fromstring(xml)
-        items=[(it.findtext("title") or "", it.findtext("link") or "") for it in root.iter("item")]
+        root = ET.fromstring(xml)
+        items = []
+        for it in root.iter("item"):
+            title = it.findtext("title") or ""
+            link  = it.findtext("link") or ""
+            pub   = it.findtext("{http://www.w3.org/2005/Atom}updated") or it.findtext("pubDate") or ""
+            items.append((title, link, pub))
         return items[:10]
-    except Exception: return []
+    except Exception:
+        return []
 
 def filter_company_news(ticker, company_name, items):
     if not items: return []
@@ -252,17 +377,18 @@ def filter_company_news(ticker, company_name, items):
     name=(company_name or "").lower()
     name_short = name.split(" ")[0] if name else ""
     keep=[]
-    for title,link in items:
+    for title, link, pub in items:
         tl=title.lower()
         if (tkr and tkr in tl) or (name and name in tl) or (name_short and name_short in tl):
-            keep.append((title,link))
+            keep.append((title, link, pub))
     return keep
 
-def news_summary(name,ticker,lang="fr"):
-    items=google_news_titles(f"{name} {ticker}",lang) or google_news_titles(name,lang)
-    items=filter_company_news(ticker, name, items)
-    titles=[t for t,_ in items]
-    if not titles: return ("Pas d’actualité saillante — mouvement technique / macro.",0.0,[])
+def news_summary(name, ticker, lang="fr"):
+    items = google_news_titles(f"{name} {ticker}", lang) or google_news_titles(name, lang)
+    items = filter_company_news(ticker, name, items)
+    titles = [t for t, _, _ in items]
+    if not titles:
+        return ("Pas d’actualité saillante — mouvement technique / macro.", 0.0, [])
     POS=["résultats","bénéfice","contrat","relève","guidance","record","upgrade","partenariat","dividende","approbation"]
     NEG=["profit warning","retard","procès","amende","downgrade","abaisse","enquête","rappel","départ","incident"]
     scores=[]
@@ -272,15 +398,20 @@ def news_summary(name,ticker,lang="fr"):
             try: s=SIA.polarity_scores(t.lower())["compound"]
             except Exception: s=0.0
         tl=t.lower()
-        if any(k in tl for k in POS): s+=0.2
-        if any(k in tl for k in NEG): s-=0.2
+        if any(k in tl for k in POS): s += 0.2
+        if any(k in tl for k in NEG): s -= 0.2
         scores.append(s)
     m=float(np.mean(scores)) if scores else 0.0
-    txt=("Hausse soutenue par des nouvelles positives." if m>0.15
-         else "Baisse liée à des nouvelles défavorables." if m<-0.15
-         else "Actualité mitigée/neutre — mouvement surtout technique.")
-    return (txt,m,items)
+    txt = ("Hausse soutenue par des nouvelles positives."
+           if m>0.15 else
+           "Baisse liée à des nouvelles défavorables."
+           if m<-0.15 else
+           "Actualité mitigée/neutre — mouvement surtout technique.")
+    return (txt, m, items)
 
+# =========================
+# DÉCISION IA & NIVEAUX
+# =========================
 def decision_label_from_row(row, held=False, vol_max=0.05):
     px=float(row.get("Close", math.nan))
     ma20=float(row.get("MA20", math.nan)) if pd.notna(row.get("MA20", math.nan)) else math.nan
@@ -311,6 +442,9 @@ def price_levels_from_row(row, profile="Neutre"):
     if not math.isfinite(base): return {"entry":math.nan,"target":math.nan,"stop":math.nan}
     return {"entry":round(base*p["entry_mult"],2),"target":round(base*p["target_mult"],2),"stop":round(base*p["stop_mult"],2)}
 
+# =========================
+# STYLE TABLEAUX (couleurs)
+# =========================
 def style_variations(df, cols):
     def color_var(v):
         if pd.isna(v): return ""
@@ -322,44 +456,16 @@ def style_variations(df, cols):
         if c in df.columns: sty=sty.applymap(color_var, subset=[c])
     return sty
 
-@lru_cache(maxsize=1024)
-def company_name_from_ticker(ticker: str) -> str:
-    if not ticker: return ""
-    try:
-        t = yf.Ticker(ticker)
-        name = None
-        try:
-            name = t.fast_info.get("shortName", None)
-        except Exception:
-            pass
-        if not name:
-            info = t.get_info()
-            name = info.get("shortName") or info.get("longName")
-        return name or ticker
-    except Exception:
-        return ticker
-
-def dividends_summary(ticker:str):
-    try:
-        t = yf.Ticker(ticker)
-        div = t.dividends
-        if div is None or div.empty:
-            return [], None
-        div = div.sort_index(ascending=False)
-        recent = [(str(idx.date()), float(val)) for idx,val in div.head(8).items()]
-        px = t.history(period="5d")["Close"].iloc[-1]
-        trailing = float(div.head(4).sum()/px) if px and px>0 else None
-        return recent, trailing
-    except Exception:
-        return [], None
-
+# =========================
+# AGGRÉGATION MARCHÉS (CAC40 + LS)
+# =========================
 def fetch_all_markets(markets, days_hist=90):
     """
-    Agrège CAC 40 et LS Exchange (watchlist).
-    Ajoute les variations pct_1d / pct_7d / pct_30d (cohérent Synthèse Flash).
+    markets: liste de tuples (Indice, source) – source ignorée pour l’instant
+    Supporte: "CAC 40" et "LS Exchange" (watchlist locale)
     """
     frames=[]
-    for idx, source in markets:
+    for idx, _ in markets:
         if idx=="CAC 40":
             mem=members("CAC 40")
         elif idx=="LS Exchange":
@@ -368,28 +474,10 @@ def fetch_all_markets(markets, days_hist=90):
             mem=pd.DataFrame({"ticker": tickers, "name": ls_list})
         else:
             continue
-
-        if mem.empty: 
-            continue
-
-        # 🔒 normalisation tickers pour jointures fiables
-        mem["ticker"]=mem["ticker"].astype(str).str.upper()
-
+        if mem.empty: continue
         px=fetch_prices(mem["ticker"].tolist(), days=days_hist)
-        if px.empty:
-            continue
-        px["Ticker"]=px["Ticker"].astype(str).str.upper()
-
-        met=compute_metrics(px)
-        if met.empty:
-            continue
-
-        # 🔐 force présence des variations (au cas où)
-        for c in ["pct_1d","pct_7d","pct_30d"]:
-            if c not in met.columns: met[c]=np.nan
-
-        met=met.merge(mem, left_on="Ticker", right_on="ticker", how="left")
+        if px.empty: continue
+        met=compute_metrics(px).merge(mem, left_on="Ticker", right_on="ticker", how="left")
         met["Indice"]=idx
         frames.append(met)
-
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
