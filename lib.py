@@ -488,7 +488,7 @@ def select_top_actions(df, profile="Neutre", n=10):
     """
     Retourne les meilleures actions (≤ n) selon IA :
     - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close), décision IA
-    - calcule aussi l’écart Objectif–Entrée (%)
+    - calcule aussi le potentiel en € (Objectif - Entrée)
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -519,12 +519,12 @@ def select_top_actions(df, profile="Neutre", n=10):
         lev = price_levels_from_row(r, profile)
         ecart = None
         if lev["entry"] and lev["target"] and lev["entry"] > 0:
-            ecart = (lev["target"]/lev["entry"] - 1) * 100
+            ecart = lev["target"] - lev["entry"]  # 🔹 Potentiel en euros
         return pd.Series({
             "Entrée (€)": lev["entry"],
             "Objectif (€)": lev["target"],
             "Stop (€)": lev["stop"],
-            "Potentiel (%)": ecart
+            "Potentiel (€)": ecart
         })
 
     levs = data.apply(_levels, axis=1)
@@ -532,7 +532,7 @@ def select_top_actions(df, profile="Neutre", n=10):
 
     keep = ["Ticker","name","Close","MA20","MA50","trend_score","pct_7d","pct_30d",
             "Volatilité","IA_Score","Décision_IA",
-            "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (%)"]
+            "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (€)"]
     for k in keep:
         if k not in top.columns:
             top[k] = np.nan
@@ -544,12 +544,11 @@ def select_top_actions(df, profile="Neutre", n=10):
         "Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
     }, inplace=True)
 
-    # Mise en forme %
+    # Mise en forme
     top["Perf 7j (%)"]   = (top["Perf 7j (%)"]*100).round(2)
     top["Perf 30j (%)"]  = (top["Perf 30j (%)"]*100).round(2)
     top["Risque"]        = (top["Risque"]*100).round(2)
     top["Score IA"]      = top["Score IA"].round(2)
     top["Cours (€)"]     = top["Cours (€)"].round(2)
-    top["Potentiel (%)"] = top["Potentiel (%)"].round(1)
+    top["Potentiel (€)"] = top["Potentiel (€)"].round(2)
     return top.reset_index(drop=True)
-
