@@ -1,35 +1,39 @@
+
 # -*- coding: utf-8 -*-
 import os, json, math, requests, numpy as np, pandas as pd, yfinance as yf
 from functools import lru_cache
 import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
 
-# ---------- Fichiers data ----------
 DATA_DIR = "data"
 MAPPING_PATH = os.path.join(DATA_DIR, "id_mapping.json")
 WL_PATH = os.path.join(DATA_DIR, "watchlist_ls.json")
-os.makedirs(DATA_DIR, exist_ok=True)
-if not os.path.exists(MAPPING_PATH):
-    with open(MAPPING_PATH,"w",encoding="utf-8") as f: json.dump({}, f)
-if not os.path.exists(WL_PATH):
-    with open(WL_PATH,"w",encoding="utf-8") as f: json.dump([], f)
+PROFILE_PATH = os.path.join(DATA_DIR, "profile.json")
+LAST_SEARCH_PATH = os.path.join(DATA_DIR, "last_search.json")
+for p in [DATA_DIR]:
+    os.makedirs(p, exist_ok=True)
+for p, default in [
+    (MAPPING_PATH, {}),
+    (WL_PATH, []),
+    (PROFILE_PATH, {"profil":"Neutre"}),
+    (LAST_SEARCH_PATH, {"last":"TTE.PA"}),
+]:
+    if not os.path.exists(p):
+        with open(p,"w",encoding="utf-8") as f: json.dump(default, f)
 
 UA = {"User-Agent":"Mozilla/5.0"}
 
-# ---------- VADER (best effort) ----------
+# Sentiment (best effort)
 try:
     nltk.data.find("sentiment/vader_lexicon.zip")
 except LookupError:
-    try:
-        nltk.download("vader_lexicon")
-    except Exception:
-        pass
+    try: nltk.download("vader_lexicon")
+    except Exception: pass
 try:
     SIA = SentimentIntensityAnalyzer()
 except Exception:
     SIA = None
 
-# ---------- Profils ----------
 PROFILE_PARAMS = {
     "Agressif": {"vol_max":0.08,"target_mult":1.10,"stop_mult":0.92,"entry_mult":0.990},
     "Neutre":   {"vol_max":0.05,"target_mult":1.07,"stop_mult":0.95,"entry_mult":0.990},
@@ -38,35 +42,48 @@ PROFILE_PARAMS = {
 def get_profile_params(profile:str):
     return PROFILE_PARAMS.get(profile or "Neutre", PROFILE_PARAMS["Neutre"])
 
-# ---------- Mapping / Watchlist ----------
-def load_mapping():
+def load_profile():
     try:
-        with open(MAPPING_PATH,"r",encoding="utf-8") as f: return json.load(f)
-    except Exception: return {}
+        return json.load(open(PROFILE_PATH,"r",encoding="utf-8")).get("profil","Neutre")
+    except Exception:
+        return "Neutre"
+def save_profile(p):
+    try:
+        json.dump({"profil":p}, open(PROFILE_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
-def save_mapping(m):
-    with open(MAPPING_PATH,"w",encoding="utf-8") as f: json.dump(m,f,ensure_ascii=False,indent=2)
+def load_last_search():
+    try:
+        return json.load(open(LAST_SEARCH_PATH,"r",encoding="utf-8")).get("last","")
+    except Exception:
+        return ""
+def save_last_search(t):
+    try:
+        json.dump({"last":t}, open(LAST_SEARCH_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def load_mapping():
+    try: return json.load(open(MAPPING_PATH,"r",encoding="utf-8"))
+    except Exception: return {}
+def save_mapping(m): json.dump(m, open(MAPPING_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
 
 def load_watchlist_ls():
-    try:
-        with open(WL_PATH,"r",encoding="utf-8") as f: return json.load(f)
+    try: return json.load(open(WL_PATH,"r",encoding="utf-8"))
     except Exception: return []
-
-def save_watchlist_ls(lst):
-    with open(WL_PATH,"w",encoding="utf-8") as f: json.dump(lst,f,ensure_ascii=False,indent=2)
+def save_watchlist_ls(lst): json.dump(lst, open(WL_PATH,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
 
 def _norm(s): return (s or "").strip().upper()
 
-# ---------- Heuristique LS → Yahoo ----------
 _PARIS = {"AIR","ORA","MC","TTE","BNP","SGO","ENGI","SU","DG","ACA","GLE","RI","KER","HO","EN","CAP","AI","PUB","VIE","VIV","STM"}
-
 def guess_yahoo_from_ls(ticker:str):
     if not ticker: return None
     t=_norm(ticker)
     if "." in t and not t.endswith(".LS"): return t
-    if t.endswith(".LS"): return f"{t[:-3]}.L"  # si vraiment London
-    if t=="TOTB": return "TOTB.F"               # TotalEnergies Xetra
-    if t.endswith("B") and not t.endswith("AB"): return f"{t}.F"  # bcp de tickers all
+    if t.endswith(".LS"): return f"{t[:-3]}.L"
+    if t=="TOTB": return "TOTB.F"
+    if t.endswith("B") and not t.endswith("AB"): return f"{t}.F"
     if t in _PARIS: return f"{t}.PA"
     if len(t)<=6 and t.isalpha(): return f"{t}.PA"
     return t
@@ -88,11 +105,9 @@ def resolve_identifier(id_or_ticker):
             if not hist.empty:
                 mapping[raw]=guess; save_mapping(mapping)
                 return guess,{"source":"heuristic"}
-        except Exception:
-            pass
+        except Exception: pass
     return None,{}
 
-# ---------- Recherche par nom (Yahoo Search) ----------
 @lru_cache(maxsize=256)
 def yahoo_search(query:str, region="FR", lang="fr-FR", quotesCount=20):
     url = "https://query2.finance.yahoo.com/v1/finance/search"
@@ -134,7 +149,6 @@ def find_ticker_by_name(company_name:str, prefer_markets=("Paris","XETRA","Frank
     ranked.sort(key=lambda x: x[0], reverse=True)
     return [r for _,r in ranked]
 
-# ---------- Constituants (CAC40) ----------
 @lru_cache(maxsize=32)
 def _read_tables(url:str):
     html=requests.get(url,headers=UA,timeout=20).text
@@ -163,15 +177,13 @@ def members(index_name:str):
     if index_name=="CAC 40": return members_cac40()
     return pd.DataFrame(columns=["ticker","name","index"])
 
-# ---------- Prix & indicateurs ----------
 @lru_cache(maxsize=64)
 def fetch_prices_cached(tickers_tuple, period="120d"):
     tickers=list(tickers_tuple)
     if not tickers: return pd.DataFrame()
     try:
         data=yf.download(tickers,period=period,interval="1d",auto_adjust=False,group_by="ticker",threads=False,progress=False)
-    except Exception:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
     if data is None or len(data)==0: return pd.DataFrame()
     frames=[]
     if isinstance(data,pd.DataFrame) and {"Open","High","Low","Close"}.issubset(data.columns):
@@ -181,8 +193,7 @@ def fetch_prices_cached(tickers_tuple, period="120d"):
             try:
                 if t in data and isinstance(data[t],pd.DataFrame):
                     df=data[t].copy(); df["Ticker"]=t; frames.append(df)
-            except Exception:
-                continue
+            except Exception: continue
     if not frames: return pd.DataFrame()
     out=pd.concat(frames); out.reset_index(inplace=True); return out
 
@@ -209,7 +220,6 @@ def compute_metrics(df:pd.DataFrame)->pd.DataFrame:
     last["trend_score"]=0.6*last["gap20"]+0.4*last["gap50"]
     return last.reset_index(drop=True)
 
-# ---------- News & IA ----------
 @lru_cache(maxsize=256)
 def google_news_titles(query, lang="fr"):
     url=f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl={lang}-{lang.upper()}&gl={lang.upper()}&ceid={lang.upper()}:{lang.upper()}"
@@ -219,8 +229,7 @@ def google_news_titles(query, lang="fr"):
         root=ET.fromstring(xml)
         items=[(it.findtext("title") or "", it.findtext("link") or "") for it in root.iter("item")]
         return items[:10]
-    except Exception:
-        return []
+    except Exception: return []
 
 def filter_company_news(ticker, company_name, items):
     if not items: return []
@@ -238,8 +247,7 @@ def news_summary(name,ticker,lang="fr"):
     items=google_news_titles(f"{name} {ticker}",lang) or google_news_titles(name,lang)
     items=filter_company_news(ticker, name, items)
     titles=[t for t,_ in items]
-    if not titles:
-        return ("Pas d’actualité saillante — mouvement technique / macro.",0.0,[])
+    if not titles: return ("Pas d’actualité saillante — mouvement technique / macro.",0.0,[])
     POS=["résultats","bénéfice","contrat","relève","guidance","record","upgrade","partenariat","dividende","approbation"]
     NEG=["profit warning","retard","procès","amende","downgrade","abaisse","enquête","rappel","départ","incident"]
     scores=[]
@@ -269,8 +277,7 @@ def decision_label_from_row(row, held=False, vol_max=0.05):
     trend=(1 if math.isfinite(ma20) and px>=ma20 else 0)+(1 if math.isfinite(ma50) and px>=ma50 else 0)
     score=0.0
     score+=0.5*(1 if trend==2 else 0 if trend==1 else -1)
-    if math.isfinite(pru) and pru>0:
-        score+=0.2*(1 if px>pru*1.02 else -1 if px<pru*0.98 else 0)
+    if math.isfinite(pru) and pru>0: score+=0.2*(1 if px>pru*1.02 else -1 if px<pru*0.98 else 0)
     score+=0.3*(-1 if vol>vol_max else 1)
     if held:
         if score>0.5: return "🟢 Acheter"
@@ -287,9 +294,7 @@ def price_levels_from_row(row, profile="Neutre"):
     ma20=float(row.get("MA20", math.nan)) if pd.notna(row.get("MA20", math.nan)) else math.nan
     base=ma20 if math.isfinite(ma20) else px
     if not math.isfinite(base): return {"entry":math.nan,"target":math.nan,"stop":math.nan}
-    return {"entry":round(base*p["entry_mult"],2),
-            "target":round(base*p["target_mult"],2),
-            "stop":round(base*p["stop_mult"],2)}
+    return {"entry":round(base*p["entry_mult"],2),"target":round(base*p["target_mult"],2),"stop":round(base*p["stop_mult"],2)}
 
 def style_variations(df, cols):
     def color_var(v):
@@ -299,8 +304,7 @@ def style_variations(df, cols):
         return "background-color:#e8f0fe; color:#1e88e5"
     sty=df.style
     for c in cols:
-        if c in df.columns:
-            sty=sty.applymap(color_var, subset=[c])
+        if c in df.columns: sty=sty.applymap(color_var, subset=[c])
     return sty
 
 @lru_cache(maxsize=1024)
@@ -334,7 +338,6 @@ def dividends_summary(ticker:str):
     except Exception:
         return [], None
 
-# ---------- Agrégateur marchés ----------
 def fetch_all_markets(markets, days_hist=90):
     frames=[]
     for idx, source in markets:
