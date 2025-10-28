@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-v6.4 — Mon Portefeuille (stable & complet)
-- Tableau éditable (ajout/modif/suppression)
-- Export / Import JSON (multi-appareils)
-- Convertisseur LS Exchange → Yahoo
-- Recherche par nom / ISIN / WKN / Ticker
-- Niveaux Entrée / Objectif / Stop + Décision IA (pastilles)
-- Graphiques performance (%) et PnL (€)
+v6.6 — Mon Portefeuille (stable + synthèse améliorée)
+- Graphique unique (PEA / CTO / Total)
+- Synthèse écrite (€ + %)
+- Période sélectionnable (1j / 7j / 30j)
+- Colonne Gain/Perte (€)
+- Conserve toutes les fonctions de la v6.4
 """
 
 import os, json, numpy as np, pandas as pd, altair as alt, streamlit as st
@@ -20,6 +19,11 @@ from lib import (
 # --- Config
 st.set_page_config(page_title="Mon Portefeuille", page_icon="💼", layout="wide")
 st.title("💼 Mon Portefeuille — PEA & CTO")
+
+# --- Choix période d’analyse
+periode = st.sidebar.radio("Période d’analyse", ["1 jour", "7 jours", "30 jours"], index=0)
+days_map = {"1 jour": 2, "7 jours": 10, "30 jours": 35}
+days_hist = days_map[periode]
 
 # --- Chargement portefeuille JSON
 DATA_PATH = "data/portfolio.json"
@@ -149,9 +153,9 @@ with c2:
 if edited.empty:
     st.info("Ajoute une action pour commencer."); st.stop()
 
-# --- Analyse IA
+# --- Analyse IA et gains
 tickers = edited["Ticker"].dropna().unique().tolist()
-hist = fetch_prices(tickers, days=120)
+hist = fetch_prices(tickers, days=days_hist)
 met = compute_metrics(hist)
 merged = edited.merge(met, on="Ticker", how="left")
 
@@ -166,6 +170,7 @@ for _, r in merged.iterrows():
     name = r.get("Name") or company_name_from_ticker(r.get("Ticker"))
     levels = price_levels_from_row(r, profil)
     val = px * qty if np.isfinite(px) else np.nan
+    gain_eur = (px - pru) * qty if np.isfinite(px) and np.isfinite(pru) else np.nan
     perf = ((px / pru) - 1) * 100 if (np.isfinite(px) and np.isfinite(pru) and pru > 0) else np.nan
     dec = decision_label_from_row(r, held=True, vol_max=volmax)
     rows.append({
@@ -176,6 +181,7 @@ for _, r in merged.iterrows():
         "Qté": qty,
         "PRU (€)": round(pru,2) if np.isfinite(pru) else None,
         "Valeur (€)": round(val,2) if np.isfinite(val) else None,
+        "Gain/Perte (€)": round(gain_eur,2) if np.isfinite(gain_eur) else None,
         "Perf%": round(perf,2) if np.isfinite(perf) else None,
         "Entrée (€)": levels["entry"],
         "Objectif (€)": levels["target"],
@@ -186,26 +192,54 @@ for _, r in merged.iterrows():
 out = pd.DataFrame(rows)
 st.dataframe(style_variations(out, ["Perf%"]), use_container_width=True, hide_index=True)
 
-# --- Graphiques
-st.subheader("📈 Performance 90 jours")
-hist90 = fetch_prices(tickers, days=100)
-if hist90.empty or "Date" not in hist90.columns:
+# --- Synthèse & graphique unique
+def synthese_perf(df, t):
+    df = df[df["Type"] == t]
+    if df.empty: return 0, 0
+    val = df["Valeur (€)"].sum()
+    gain = df["Gain/Perte (€)"].sum()
+    pct = (gain / (val - gain) * 100) if val - gain != 0 else 0
+    return gain, pct
+
+pea_gain, pea_pct = synthese_perf(out, "PEA")
+cto_gain, cto_pct = synthese_perf(out, "CTO")
+tot_gain, tot_pct = out["Gain/Perte (€)"].sum(), (
+    (out["Gain/Perte (€)"].sum() / (out["Valeur (€)"].sum() - out["Gain/Perte (€)"].sum()) * 100)
+    if out["Valeur (€)"].sum() > 0 else 0
+)
+
+st.markdown(f"""
+### 📊 Synthèse {periode}
+**PEA** : {pea_gain:+.2f} € ({pea_pct:+.2f}%)  
+**CTO** : {cto_gain:+.2f} € ({cto_pct:+.2f}%)  
+**Total** : {tot_gain:+.2f} € ({tot_pct:+.2f}%)
+""")
+
+# --- Graphique
+st.subheader(f"📈 Variation du portefeuille — {periode}")
+hist = fetch_prices(tickers, days=days_hist)
+if hist.empty or "Date" not in hist.columns:
     st.caption("Pas assez d'historique.")
 else:
     df = []
     for _, r in edited.iterrows():
         t, q, pru, tp = r["Ticker"], r["Qty"], r["PRU"], r["Type"]
-        d = hist90[hist90["Ticker"] == t].copy()
+        d = hist[hist["Ticker"] == t].copy()
         if d.empty: continue
-        d["Perf%"] = (d["Close"] / pru - 1) * 100
-        d["PnL€"] = (d["Close"] - pru) * q
+        d["Valeur"] = d["Close"] * q
         d["Type"] = tp
-        df.append(d[["Date","Perf%","PnL€","Type"]])
+        df.append(d[["Date","Valeur","Type"]])
     if df:
         D = pd.concat(df)
-        ch1 = alt.Chart(D).mark_line().encode(x="Date:T", y="Perf%:Q", color="Type:N",
-                                              tooltip=["Date:T","Perf%:Q","Type"]).properties(title="Rentabilité (%)")
-        ch2 = alt.Chart(D).mark_line().encode(x="Date:T", y="PnL€:Q", color="Type:N",
-                                              tooltip=["Date:T","PnL€:Q","Type"]).properties(title="Gain/Perte (€)")
-        st.altair_chart(ch1, use_container_width=True)
-        st.altair_chart(ch2, use_container_width=True)
+        agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()
+        tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")
+        full = pd.concat([agg, tot])
+        base = full.groupby("Type").apply(lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100))
+        base.reset_index(drop=True, inplace=True)
+        chart = alt.Chart(base).mark_line(point=False).encode(
+            x="Date:T",
+            y=alt.Y("Pct:Q", title="Variation (%)"),
+            color=alt.Color("Type:N", scale=alt.Scale(scheme="category10")),
+            tooltip=["Date:T","Type:N","Pct:Q"]
+        ).properties(height=400)
+        st.altair_chart(chart, use_container_width=True)
