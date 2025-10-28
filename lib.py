@@ -482,13 +482,14 @@ def fetch_all_markets(markets, days_hist=120):
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
 
 # =========================
-# SÉLECTION IA OPTIMALE (TOP 10)
+# SÉLECTION IA OPTIMALE (TOP 10) — avec surbrillance "proche de l’entrée"
 # =========================
 def select_top_actions(df, profile="Neutre", n=10):
     """
     Retourne les meilleures actions (≤ n) selon IA :
     - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close), décision IA
-    - calcule aussi le potentiel en € (Objectif - Entrée)
+    - calcule le potentiel en € (Objectif - Entrée)
+    - marque visuellement les titres proches de l’entrée idéale
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -517,14 +518,14 @@ def select_top_actions(df, profile="Neutre", n=10):
 
     def _levels(r):
         lev = price_levels_from_row(r, profile)
-        ecart = None
+        ecart_euro = None
         if lev["entry"] and lev["target"] and lev["entry"] > 0:
-            ecart = lev["target"] - lev["entry"]  # 🔹 Potentiel en euros
+            ecart_euro = lev["target"] - lev["entry"]
         return pd.Series({
             "Entrée (€)": lev["entry"],
             "Objectif (€)": lev["target"],
             "Stop (€)": lev["stop"],
-            "Potentiel (€)": ecart
+            "Potentiel (€)": ecart_euro
         })
 
     levs = data.apply(_levels, axis=1)
@@ -544,6 +545,17 @@ def select_top_actions(df, profile="Neutre", n=10):
         "Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
     }, inplace=True)
 
+    # Calcul de proximité à l’entrée
+    def is_near_entry(r):
+        c = r.get("Cours (€)")
+        e = r.get("Entrée (€)")
+        if not (np.isfinite(c) and np.isfinite(e)) or e == 0:
+            return False
+        diff = abs(c - e) / e
+        return diff <= 0.02  # 2 % max d’écart
+
+    top["Près de l’entrée"] = top.apply(is_near_entry, axis=1)
+
     # Mise en forme
     top["Perf 7j (%)"]   = (top["Perf 7j (%)"]*100).round(2)
     top["Perf 30j (%)"]  = (top["Perf 30j (%)"]*100).round(2)
@@ -551,4 +563,20 @@ def select_top_actions(df, profile="Neutre", n=10):
     top["Score IA"]      = top["Score IA"].round(2)
     top["Cours (€)"]     = top["Cours (€)"].round(2)
     top["Potentiel (€)"] = top["Potentiel (€)"].round(2)
+
+    # Style de surbrillance
+    def highlight_entry(val, flag):
+        if flag:
+            return "background-color: #fff9c4; font-weight:600"  # jaune clair
+        return ""
+    try:
+        sty = top.style.apply(
+            lambda _: ["background-color:#fff9c4" if near else "" for near in top["Près de l’entrée"]],
+            subset=["Cours (€)", "Entrée (€)"]
+        )
+        sty = sty.format(precision=2)
+        top._repr_html_ = lambda: sty._repr_html_()
+    except Exception:
+        pass
+
     return top.reset_index(drop=True)
