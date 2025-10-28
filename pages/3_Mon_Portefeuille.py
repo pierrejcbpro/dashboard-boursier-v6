@@ -102,6 +102,35 @@ with st.expander("🔁 Convertisseur LS Exchange → Yahoo"):
 
 st.divider()
 
+# --- Recherche ajout
+with st.expander("🔎 Recherche par nom / ISIN / WKN / Ticker"):
+    q = st.text_input("Nom ou identifiant", "")
+    t = st.selectbox("Type", ["PEA", "CTO"])
+    qty = st.number_input("Qté", min_value=0.0, step=1.0)
+    if st.button("Rechercher"):
+        if not q.strip():
+            st.warning("Entre un terme.")
+        else:
+            sym, _ = resolve_identifier(q)
+            if sym:
+                st.session_state["search_res"] = [{"symbol": sym, "shortname": company_name_from_ticker(sym)}]
+            else:
+                st.session_state["search_res"] = find_ticker_by_name(q) or []
+    res = st.session_state.get("search_res", [])
+    if res:
+        labels = [f"{r['symbol']} — {r.get('shortname','')}" for r in res]
+        sel = st.selectbox("Résultats", labels)
+        if st.button("➕ Ajouter"):
+            i = labels.index(sel)
+            sym = res[i]["symbol"]
+            nm = res[i].get("shortname", sym)
+            pf = pd.concat([pf, pd.DataFrame([{"Ticker": sym.upper(), "Type": t, "Qty": qty, "PRU": 0.0, "Name": nm}])], ignore_index=True)
+            pf.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
+            st.success(f"Ajouté : {nm} ({sym})"); st.rerun()
+
+st.divider()
+
+
 # --- Tableau principal
 st.subheader("📝 Mon Portefeuille")
 edited = st.data_editor(
