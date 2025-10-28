@@ -143,6 +143,17 @@ edited = st.data_editor(
         "Name": st.column_config.TextColumn("Nom"),
     }
 )
+
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("💾 Enregistrer les modifs"):
+        edited["Ticker"] = edited["Ticker"].astype(str).str.upper()
+        edited.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
+        st.success("✅ Sauvegardé."); st.rerun()
+with c2:
+    if st.button("🔄 Rafraîchir"):
+        st.cache_data.clear(); st.rerun()
+
 if edited.empty:
     st.info("Ajoute une action pour commencer."); st.stop()
 
