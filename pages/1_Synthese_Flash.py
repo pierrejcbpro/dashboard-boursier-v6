@@ -77,14 +77,30 @@ with col2:
     if flop.empty: st.info("Pas de baisses.")
     else: st.dataframe(style_variations(flop, ["Variation %"]), use_container_width=True, hide_index=True)
 
-
 # ---------------- Sélection IA TOP 10 ----------------
 st.subheader("🚀 Sélection IA — Opportunités idéales (TOP 10)")
 top_actions = select_top_actions(valid, profile=profil, n=10)
 if top_actions.empty:
     st.info("Aucune opportunité claire détectée aujourd’hui selon l’IA.")
 else:
-    st.dataframe(top_actions, use_container_width=True, hide_index=True)
+    # ✅ surbrillance douce si "Près de l’entrée" = True
+    def highlight_near_entry(row):
+        if bool(row.get("Près de l’entrée", False)):
+            # gris doux compatible thème clair & sombre
+            return ["background-color: rgba(200,200,200,0.15)"] * len(row)
+        return ["" for _ in row]
+
+    cols_affichees = [
+        "Société","Symbole","Cours (€)","Perf 7j (%)","Perf 30j (%)","Tendance",
+        "Risque","Signal","Score IA",
+        "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (€)","Proximité (%)","Près de l’entrée"
+    ]
+    show_df = top_actions[[c for c in cols_affichees if c in top_actions.columns]]
+    st.dataframe(
+        show_df.style.apply(highlight_near_entry, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
 
 # ---------------- Charts simples ----------------
 st.markdown("### 📊 Visualisation rapide")
@@ -129,3 +145,4 @@ if not flop.empty:
         st.markdown(f"- **{r['Société']} ({r['Ticker']})** : {short_news(r)}")
 
 st.divider()
+st.caption("📈 Données issues de Yahoo Finance — IA de tendance propriétaire v6.9")
