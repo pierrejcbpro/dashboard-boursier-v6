@@ -599,3 +599,37 @@ def select_top_actions(df, profile="Neutre", n=10):
         pass
 
     return top.reset_index(drop=True)
+
+# ===============================
+# 🎨 STYLES VISUELS ADAPTATIFS
+# ===============================
+
+def detect_dark_mode():
+    """Détecte si Streamlit est en thème sombre."""
+    try:
+        import streamlit as st
+        theme = st.get_option("theme.base")
+        return ("dark" in theme.lower() or "#0e1117" in theme.lower())
+    except Exception:
+        return False
+
+
+def highlight_near_entry_adaptive(row, col="Proximité (%)"):
+    """Surbrillance lisible en mode clair/sombre."""
+    dark_mode = detect_dark_mode()
+    bg_color = "rgba(0,255,200,0.15)" if dark_mode else "#fff9c4"
+    if pd.notna(row.get(col)) and abs(row[col]) <= 2:
+        return [f"background-color: {bg_color}; font-weight:600"] * len(row)
+    return [""] * len(row)
+
+
+def color_proximity_adaptive(v):
+    """Colore la cellule selon la proximité avec une palette adaptée au thème."""
+    if pd.isna(v): return ""
+    dark_mode = detect_dark_mode()
+    if abs(v) <= 2:
+        return "background-color:rgba(0,255,150,0.2); color:#00ffcc" if dark_mode else "background-color:#e6f4ea; color:#0b8043"
+    if abs(v) <= 5:
+        return "background-color:rgba(255,255,150,0.15); color:#ffeb3b" if dark_mode else "background-color:#fff8e1; color:#a67c00"
+    return "background-color:rgba(255,0,0,0.15); color:#ff6666" if dark_mode else "background-color:#ffebee; color:#b71c1c"
+
