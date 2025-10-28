@@ -34,7 +34,7 @@ if include_ls:
     MARKETS += [("LS Exchange", None)]
 
 if not MARKETS:
-    st.warning("Aucun marché sélectionné. Active au moins un marché dans le panneau latéral.")
+    st.warning("Aucun marché sélectionné. Active au moins un marché dans la barre latérale.")
     st.stop()
 
 data = fetch_all_markets(MARKETS, days_hist=120)
@@ -94,13 +94,69 @@ with col2:
     if flop.empty: st.info("Pas de baisses.")
     else: st.dataframe(style_variations(flop, ["Variation %"]), use_container_width=True, hide_index=True)
 
+st.divider()
+
 # ---------------- Sélection IA TOP 10 ----------------
 st.subheader("🚀 Sélection IA — Opportunités idéales (TOP 10)")
 top_actions = select_top_actions(valid, profile=profil, n=10)
+
 if top_actions.empty:
     st.info("Aucune opportunité claire détectée aujourd’hui selon l’IA.")
 else:
-    st.dataframe(top_actions, use_container_width=True, hide_index=True)
+    # --- Calcul de la proximité entrée / cours ---
+    def compute_proximity(row):
+        e = row.get("Entrée (€)")
+        px = row.get("Cours (€)")
+        if not np.isfinite(e) or not np.isfinite(px) or e == 0:
+            return np.nan
+        return ((px / e) - 1) * 100
+
+    if "Proximité (%)" not in top_actions.columns:
+        top_actions["Proximité (%)"] = top_actions.apply(compute_proximity, axis=1)
+
+    # --- Emoji de repère visuel
+    def proximity_marker(v):
+        if pd.isna(v): return "⚪"
+        if abs(v) <= 2: return "🟢"
+        elif abs(v) <= 5: return "⚠️"
+        else: return "🔴"
+
+    top_actions["Signal Entrée"] = top_actions["Proximité (%)"].apply(proximity_marker)
+
+    # --- Moyenne de proximité (évalue globalement si marché est proche zones d’achat)
+    prox_mean = top_actions["Proximité (%)"].dropna().mean()
+    if pd.notna(prox_mean):
+        emoji = "🟢" if abs(prox_mean) <= 2 else ("⚠️" if abs(prox_mean) <= 5 else "🔴")
+        st.markdown(f"**📏 Moyenne de proximité IA : {prox_mean:+.2f}% {emoji}**")
+
+    # --- Style couleur fond selon la proximité
+    def style_prox(v):
+        if pd.isna(v): return ""
+        if abs(v) <= 2:  return "background-color:#e8f5e9; color:#0b8043; font-weight:600;"
+        if abs(v) <= 5:  return "background-color:#fff8e1; color:#a67c00;"
+        return "background-color:#ffebee; color:#b71c1c;"
+
+    # --- Mise en valeur des décisions IA (🟢 / 🚫 / 👁️)
+    def style_decision(val):
+        if pd.isna(val): return ""
+        if "Acheter" in val: return "background-color:rgba(0,200,0,0.15); font-weight:600;"
+        if "Éviter" in val:  return "background-color:rgba(255,0,0,0.15); font-weight:600;"
+        if "Surveiller" in val: return "background-color:rgba(0,100,255,0.1); font-weight:600;"
+        return ""
+
+    styled = (
+        top_actions.style
+        .applymap(style_prox, subset=["Proximité (%)"])
+        .applymap(style_decision, subset=["Signal"])
+    )
+
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        hide_index=True
+    )
+
+st.divider()
 
 # ---------------- Charts simples ----------------
 st.markdown("### 📊 Visualisation rapide")
@@ -145,4 +201,4 @@ if not flop.empty:
         st.markdown(f"- **{r['Société']} ({r['Ticker']})** : {short_news(r)}")
 
 st.divider()
-st.caption("💡 Astuce : active ou désactive les marchés US dans la barre latérale pour ajuster la vision mondiale.")
+st.caption("💡 Active ou désactive les marchés US dans la barre latérale pour ajuster la vision mondiale.")
