@@ -1,55 +1,155 @@
 # -*- coding: utf-8 -*-
-import streamlit as st
-import pandas as pd, numpy as np
+"""
+v7.0 — Détails Indice
+Analyse IA complète d’un indice boursier :
+- Sélection dynamique (CAC40, DAX, NASDAQ100, S&P500)
+- Classement IA des actions (Acheter / Surveiller / Vendre)
+- Calcul global de volatilité moyenne et dispersion
+- Graphiques interactifs (perf + barres IA)
+"""
+
+import streamlit as st, pandas as pd, numpy as np, altair as alt
 from lib import (
-    members, fetch_prices, compute_metrics, news_summary,
-    decision_label_from_row, style_variations, get_profile_params,
-    price_levels_from_row, load_watchlist_ls, company_name_from_ticker
+    fetch_all_markets, compute_metrics, price_levels_from_row, decision_label_from_row,
+    style_variations, get_profile_params, load_profile
 )
 
-st.set_page_config(page_title="Détail par Indice", page_icon="📊", layout="wide")
-st.title("📊 Détail par Indice — CAC 40 / LS Exchange")
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Détails Indice", page_icon="📊", layout="wide")
+st.title("📊 Détails Indice — Analyse IA complète")
 
-profil = st.session_state.get("profil", "Neutre")
-params = get_profile_params(profil)
-volmax = params["vol_max"]
+# ---------------- CHOIX INDICE ----------------
+indice = st.sidebar.selectbox(
+    "Choisis un indice",
+    ["CAC 40", "DAX", "S&P 500", "NASDAQ 100"],
+    index=0
+)
 
-univers = st.selectbox("Choisir un indice :", ["CAC 40","LS Exchange"], index=0)
+periode = st.sidebar.radio("Période d’analyse", ["Jour", "7 jours", "30 jours"], index=1)
+value_col = {"Jour": "pct_1d", "7 jours": "pct_7d", "30 jours": "pct_30d"}[periode]
 
-if univers == "CAC 40":
-    mem = members("CAC 40")
+profil = load_profile()
+st.sidebar.markdown(f"**Profil IA actif :** {profil}")
+
+st.divider()
+
+# ---------------- DONNÉES ----------------
+data = fetch_all_markets([(indice, None)], days_hist=120)
+if data.empty:
+    st.warning("Aucune donnée disponible (vérifie la connectivité).")
+    st.stop()
+
+# Calcul métriques IA
+met = compute_metrics(data)
+if met.empty:
+    st.warning("Impossible de calculer les métriques IA.")
+    st.stop()
+
+# Fusion avec les infos de variation
+merged = data.merge(met, on="Ticker", how="left")
+
+# ---------------- ANALYSE GLOBALE ----------------
+avg = merged[value_col].mean() * 100
+disp = merged[value_col].std() * 100
+st.markdown(f"### 🧭 Vue d’ensemble — {indice} ({periode})")
+st.markdown(f"**Variation moyenne : {avg:+.2f}%** — **Dispersion : {disp:.2f}%**")
+
+if disp < 1:
+    st.caption("Marché homogène, faible volatilité.")
+elif disp < 3:
+    st.caption("Marché équilibré, rotations sectorielles modérées.")
 else:
-    wl = load_watchlist_ls()
-    mem = pd.DataFrame({"ticker": wl, "name": wl})
+    st.caption("Marché dispersé, forte volatilité intertitres.")
 
-if mem.empty:
-    st.warning("Aucune action trouvée."); st.stop()
+st.divider()
 
-px = fetch_prices(mem["ticker"].tolist(), days=120)
-met = compute_metrics(px).merge(mem, left_on="Ticker", right_on="ticker", how="left")
+# ---------------- CLASSEMENT IA ----------------
+rows = []
+volmax = get_profile_params(profil)["vol_max"]
+for _, r in merged.iterrows():
+    levels = price_levels_from_row(r, profil)
+    dec = decision_label_from_row(r, held=False, vol_max=volmax)
+    entry, target, stop = levels["entry"], levels["target"], levels["stop"]
+    px = r.get("Close", np.nan)
+    prox = ((px / entry) - 1) * 100 if np.isfinite(px) and np.isfinite(entry) and entry > 0 else np.nan
+    emoji = "🟢" if abs(prox) <= 2 else ("⚠️" if abs(prox) <= 5 else "🔴")
+    rows.append({
+        "Société": r.get("name", ""),
+        "Ticker": r["Ticker"],
+        "Cours (€)": round(px, 2),
+        "Variation (%)": round(r[value_col] * 100, 2),
+        "Entrée (€)": entry,
+        "Objectif (€)": target,
+        "Stop (€)": stop,
+        "Décision IA": dec,
+        "Proximité (%)": round(prox, 2) if np.isfinite(prox) else np.nan,
+        "Signal": emoji
+    })
 
-top5 = met.sort_values("trend_score", ascending=False).head(5)
-low5 = met.sort_values("trend_score", ascending=True).head(5)
+out = pd.DataFrame(rows)
+if out.empty:
+    st.info("Aucune donnée exploitable pour cet indice.")
+    st.stop()
 
-def enrich(df):
-    rows=[]
-    for _,r in df.iterrows():
-        name = r.get("name") or company_name_from_ticker(r.get("Ticker",""))
-        tick = r.get("Ticker","")
-        levels = price_levels_from_row(r, profil)
-        txt,sc,_ = news_summary(name, tick)
-        dec = decision_label_from_row(r, False, vol_max=volmax)
-        rows.append({
-            "Nom": name, "Ticker": tick, "Cours (€)": round(float(r.get("Close",np.nan)),2),
-            "Écart MA20 %": round((r.get("gap20",0) or 0)*100,2),
-            "Écart MA50 %": round((r.get("gap50",0) or 0)*100,2),
-            "Entrée (€)": levels["entry"], "Objectif (€)": levels["target"], "Stop (€)": levels["stop"],
-            "Décision IA": dec, "Sentiment": round(sc,2)
-        })
-    return pd.DataFrame(rows)
+# Tri : d’abord Acheter > Surveiller > Vendre, puis par proximité
+def sort_key(val):
+    if "Acheter" in val: return 0
+    if "Surveiller" in val: return 1
+    if "Vendre" in val: return 2
+    return 3
+out["sort"] = out["Décision IA"].apply(sort_key)
+out = out.sort_values(["sort", "Proximité (%)"], ascending=[True, True]).drop(columns="sort")
 
-st.subheader("Top 5 haussières")
-st.dataframe(style_variations(enrich(top5), ["Écart MA20 %","Écart MA50 %","Sentiment"]), use_container_width=True)
+# ---------------- TABLEAU PRINCIPAL ----------------
+def color_decision(v):
+    if pd.isna(v): return ""
+    if "Acheter" in v: return "background-color: rgba(0,200,0,0.15);"
+    if "Vendre" in v: return "background-color: rgba(255,0,0,0.15);"
+    if "Surveiller" in v: return "background-color: rgba(0,100,255,0.15);"
+    return ""
 
-st.subheader("Top 5 baissières")
-st.dataframe(style_variations(enrich(low5), ["Écart MA20 %","Écart MA50 %","Sentiment"]), use_container_width=True)
+def color_proximity(v):
+    if pd.isna(v): return ""
+    if abs(v) <= 2: return "background-color: rgba(0,200,0,0.10); color:#0b8043"
+    if abs(v) <= 5: return "background-color: rgba(255,200,0,0.15); color:#a67c00"
+    return "background-color: rgba(255,0,0,0.12); color:#b71c1c"
+
+st.subheader("🚦 Classement IA des actions")
+st.dataframe(
+    out.style
+        .applymap(color_decision, subset=["Décision IA"])
+        .applymap(color_proximity, subset=["Proximité (%)"]),
+    use_container_width=True, hide_index=True
+)
+
+# ---------------- GRAPHIQUES ----------------
+st.divider()
+st.subheader("📈 Distribution IA — Synthèse visuelle")
+
+col1, col2 = st.columns(2)
+with col1:
+    chart = alt.Chart(out).mark_bar().encode(
+        x=alt.X("Décision IA:N", sort=["Acheter","Surveiller","Vendre"], title="Décision IA"),
+        y=alt.Y("count():Q", title="Nombre de valeurs"),
+        color=alt.Color("Décision IA:N", legend=None)
+    ).properties(height=320, title="Répartition des décisions IA")
+    st.altair_chart(chart, use_container_width=True)
+
+with col2:
+    chart2 = alt.Chart(out).mark_bar().encode(
+        x=alt.X("Société:N", sort="-y", title=""),
+        y=alt.Y("Variation (%):Q", title="Perf (%)"),
+        color=alt.Color("Variation (%):Q", scale=alt.Scale(scheme="redyellowgreen")),
+        tooltip=["Société","Ticker","Variation (%)"]
+    ).properties(height=320, title=f"Tendances — {periode}")
+    st.altair_chart(chart2, use_container_width=True)
+
+# ---------------- CONCLUSION ----------------
+st.divider()
+st.markdown(f"""
+### 🧠 Synthèse IA {indice}
+- Profil IA actif : **{profil}**
+- Actions **🟢 proches de l’entrée idéale** : { (out['Signal'] == '🟢').sum() }
+- Actions **⚠️ modérément proches** : { (out['Signal'] == '⚠️').sum() }
+- Actions **🔴 éloignées** : { (out['Signal'] == '🔴').sum() }
+""")
