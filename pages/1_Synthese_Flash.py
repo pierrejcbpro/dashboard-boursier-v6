@@ -77,24 +77,6 @@ with col2:
     if flop.empty: st.info("Pas de baisses.")
     else: st.dataframe(style_variations(flop, ["Variation %"]), use_container_width=True, hide_index=True)
 
-# ---------------- Actualités ----------------
-st.markdown("### 📰 Actualités principales")
-def short_news(row):
-    nm = str(row.get("Société") or "")
-    tk = str(row.get("Ticker") or "")
-    txt, score, items = news_summary(nm, tk, lang="fr")
-    return txt
-
-if not top.empty:
-    st.markdown("**Top hausses — explication probable :**")
-    for _, r in top.iterrows():
-        st.markdown(f"- **{r['Société']} ({r['Ticker']})** : {short_news(r)}")
-if not flop.empty:
-    st.markdown("**Baisses — explication probable :**")
-    for _, r in flop.iterrows():
-        st.markdown(f"- **{r['Société']} ({r['Ticker']})** : {short_news(r)}")
-
-st.divider()
 
 # ---------------- Sélection IA TOP 10 ----------------
 st.subheader("🚀 Sélection IA — Opportunités idéales (TOP 10)")
@@ -128,3 +110,22 @@ def bar_chart(df, title):
 col3, col4 = st.columns(2)
 with col3: bar_chart(top, f"Top 10 hausses ({periode})")
 with col4: bar_chart(flop, f"Top 10 baisses ({periode})")
+
+# ---------------- Actualités ----------------
+st.markdown("### 📰 Actualités principales")
+def short_news(row):
+    nm = str(row.get("Société") or "")
+    tk = str(row.get("Ticker") or "")
+    txt, score, items = news_summary(nm, tk, lang="fr")
+    return txt
+
+if not top.empty:
+    st.markdown("**Top hausses — explication probable :**")
+    for _, r in top.iterrows():
+        st.markdown(f"- **{r['Société']} ({r['Ticker']})** : {short_news(r)}")
+if not flop.empty:
+    st.markdown("**Baisses — explication probable :**")
+    for _, r in flop.iterrows():
+        st.markdown(f"- **{r['Société']} ({r['Ticker']})** : {short_news(r)}")
+
+st.divider()
