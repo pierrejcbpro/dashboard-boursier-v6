@@ -482,12 +482,13 @@ def fetch_all_markets(markets, days_hist=120):
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
 
 # =========================
-# SÉLECTION IA OPTIMALE (TOP 5)
+# SÉLECTION IA OPTIMALE (TOP 10)
 # =========================
-def select_top_actions(df, profile="Neutre", n=5):
+def select_top_actions(df, profile="Neutre", n=10):
     """
     Retourne les meilleures actions (≤ n) selon IA :
     - tendance (MA20/MA50), momentum (7j/30j), volatilité (ATR/Close), décision IA
+    - calcule aussi l’écart Objectif–Entrée (%)
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -496,37 +497,42 @@ def select_top_actions(df, profile="Neutre", n=5):
     vol_max = p["vol_max"]
 
     data = df.copy()
-    # sécurités colonnes
     for c in ["trend_score","pct_7d","pct_30d","ATR14","Close"]:
         if c not in data.columns: data[c] = np.nan
 
     data = data.dropna(subset=["Close"])
     data["Volatilité"] = data["ATR14"] / data["Close"]
 
-    # Score IA (pondérations simples et lisibles)
+    # Score IA global
     data["IA_Score"] = (
-        (data["trend_score"].fillna(0) * 50.0) +
-        (data["pct_30d"].fillna(0) * 100.0) +
-        (data["pct_7d"].fillna(0) * 50.0) -
-        (data["Volatilité"].fillna(0) * 10.0)
+        (data["trend_score"].fillna(0) * 50.0)
+        + (data["pct_30d"].fillna(0) * 100.0)
+        + (data["pct_7d"].fillna(0) * 50.0)
+        - (data["Volatilité"].fillna(0) * 10.0)
     )
 
-    # Décision IA (pour “Acheter”)
     data["Décision_IA"] = data.apply(lambda r: decision_label_from_row(r, held=False, vol_max=vol_max), axis=1)
     filt = (data["Décision_IA"].str.contains("🟢", na=False)) & (data["Volatilité"] <= vol_max * 1.5)
     data = data[filt].sort_values("IA_Score", ascending=False)
 
-    # Calcul des niveaux
     def _levels(r):
         lev = price_levels_from_row(r, profile)
-        return pd.Series({"Entrée (€)": lev["entry"], "Objectif (€)": lev["target"], "Stop (€)": lev["stop"]})
+        ecart = None
+        if lev["entry"] and lev["target"] and lev["entry"] > 0:
+            ecart = (lev["target"]/lev["entry"] - 1) * 100
+        return pd.Series({
+            "Entrée (€)": lev["entry"],
+            "Objectif (€)": lev["target"],
+            "Stop (€)": lev["stop"],
+            "Potentiel (%)": ecart
+        })
 
     levs = data.apply(_levels, axis=1)
-
     top = pd.concat([data.reset_index(drop=True), levs.reset_index(drop=True)], axis=1).head(n)
 
-    # Colonnes lisibles
-    keep = ["Ticker","name","Close","MA20","MA50","trend_score","pct_7d","pct_30d","Volatilité","IA_Score","Décision_IA","Entrée (€)","Objectif (€)","Stop (€)"]
+    keep = ["Ticker","name","Close","MA20","MA50","trend_score","pct_7d","pct_30d",
+            "Volatilité","IA_Score","Décision_IA",
+            "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (%)"]
     for k in keep:
         if k not in top.columns:
             top[k] = np.nan
@@ -534,7 +540,8 @@ def select_top_actions(df, profile="Neutre", n=5):
 
     top.rename(columns={
         "Ticker":"Symbole","name":"Société","Close":"Cours (€)","trend_score":"Tendance",
-        "pct_7d":"Perf 7j (%)","pct_30d":"Perf 30j (%)","Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
+        "pct_7d":"Perf 7j (%)","pct_30d":"Perf 30j (%)",
+        "Volatilité":"Risque","IA_Score":"Score IA","Décision_IA":"Signal"
     }, inplace=True)
 
     # Mise en forme %
@@ -543,4 +550,6 @@ def select_top_actions(df, profile="Neutre", n=5):
     top["Risque"]        = (top["Risque"]*100).round(2)
     top["Score IA"]      = top["Score IA"].round(2)
     top["Cours (€)"]     = top["Cours (€)"].round(2)
+    top["Potentiel (%)"] = top["Potentiel (%)"].round(1)
     return top.reset_index(drop=True)
+
