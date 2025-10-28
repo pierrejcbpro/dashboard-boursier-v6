@@ -481,3 +481,60 @@ def fetch_all_markets(markets, days_hist=90):
         met["Indice"]=idx
         frames.append(met)
     return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+
+# =========================
+# SÉLECTION IA OPTIMALE (TOP 5)
+# =========================
+def select_top_actions(df, profile="Neutre", n=5):
+    """
+    Retourne les 4-5 meilleures actions selon IA :
+    - tendance, momentum, volatilité, décision IA
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    p = get_profile_params(profile)
+    vol_max = p["vol_max"]
+
+    data = df.copy()
+    data = data.dropna(subset=["Close", "trend_score", "ATR14"])
+
+    # Calcul du score IA
+    data["Volatilité"] = data["ATR14"] / data["Close"]
+    data["IA_Score"] = (
+        (data["trend_score"] * 50)
+        + (data.get("pct_30d", 0) * 100)
+        + (data.get("pct_7d", 0) * 50)
+        - (data["Volatilité"] * 10)
+    )
+
+    # Application de la décision IA
+    data["Décision_IA"] = data.apply(lambda r: decision_label_from_row(r, held=False, vol_max=vol_max), axis=1)
+
+    # Filtrage : actions à acheter et vol raisonnable
+    filt = (data["Décision_IA"].str.contains("🟢")) & (data["Volatilité"] <= vol_max * 1.5)
+    data = data[filt].sort_values("IA_Score", ascending=False)
+
+    # Top 5
+    top = data.head(n).copy()
+
+    # Colonnes lisibles
+    top = top[["Ticker", "Close", "MA20", "MA50", "trend_score", "pct_7d", "pct_30d", "Volatilité", "IA_Score", "Décision_IA"]]
+    top.rename(columns={
+        "Ticker": "Symbole",
+        "Close": "Cours (€)",
+        "MA20": "MA20",
+        "MA50": "MA50",
+        "trend_score": "Tendance",
+        "pct_7d": "Perf 7j (%)",
+        "pct_30d": "Perf 30j (%)",
+        "Volatilité": "Risque",
+        "IA_Score": "Score IA",
+        "Décision_IA": "Signal",
+    }, inplace=True)
+    top["Perf 7j (%)"] = (top["Perf 7j (%)"] * 100).round(2)
+    top["Perf 30j (%)"] = (top["Perf 30j (%)"] * 100).round(2)
+    top["Risque"] = (top["Risque"] * 100).round(2)
+    top["Score IA"] = top["Score IA"].round(2)
+    return top.reset_index(drop=True)
+
