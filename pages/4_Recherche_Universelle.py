@@ -166,6 +166,20 @@ with cA:
         f"- **Entrée** ≈ **{entry:.2f}** · **Objectif** ≈ **{target:.2f}** · **Stop** ≈ **{stop:.2f}**\n"
         f"- **Volatilité** : {'faible' if vol < 2 else 'modérée' if vol < 5 else 'élevée'} ({vol:.2f}%)"
     )
+    # --- Proximité entrée ---
+prox = ((row["Close"] / entry) - 1) * 100 if entry and entry > 0 else np.nan
+if np.isfinite(prox):
+    emoji = "🟢" if abs(prox) <= 2 else ("⚠️" if abs(prox) <= 5 else "🔴")
+    st.markdown(f"- **Proximité de l’entrée** : {prox:+.2f}% {emoji}")
+    if abs(prox) <= 2:
+        st.success("🟢 Cette valeur est proche du point d’entrée idéal (zone d’achat potentielle).")
+    elif abs(prox) <= 5:
+        st.warning("⚠️ Cours modérément éloigné de l’entrée idéale.")
+    else:
+        st.info("🔴 Cours éloigné du point d’entrée — attendre un repli.")
+else:
+    st.caption("Proximité non calculable.")
+
 
     # --- Nouveau bouton pour ajouter au portefeuille ---
     st.divider()
