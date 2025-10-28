@@ -83,11 +83,19 @@ top_actions = select_top_actions(valid, profile=profil, n=10)
 if top_actions.empty:
     st.info("Aucune opportunité claire détectée aujourd’hui selon l’IA.")
 else:
+    # ✅ Ajout emoji de proximité
+    def emoji_proximite(val):
+        if pd.isna(val): return ""
+        if abs(val) <= 2: return f"{val:+.2f}% 🟢"
+        elif abs(val) <= 5: return f"{val:+.2f}% ⚠️"
+        else: return f"{val:+.2f}% 🔴"
+
+    top_actions["Proximité (%)"] = top_actions["Proximité (%)"].apply(emoji_proximite)
+
     # ✅ surbrillance douce si "Près de l’entrée" = True
     def highlight_near_entry(row):
         if bool(row.get("Près de l’entrée", False)):
-            # gris doux compatible thème clair & sombre
-            return ["background-color: rgba(200,200,200,0.15)"] * len(row)
+            return ["background-color: rgba(160,160,160,0.15)"] * len(row)
         return ["" for _ in row]
 
     cols_affichees = [
@@ -96,6 +104,7 @@ else:
         "Entrée (€)","Objectif (€)","Stop (€)","Potentiel (€)","Proximité (%)","Près de l’entrée"
     ]
     show_df = top_actions[[c for c in cols_affichees if c in top_actions.columns]]
+
     st.dataframe(
         show_df.style.apply(highlight_near_entry, axis=1),
         use_container_width=True,
